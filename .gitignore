@@ -11,3 +11,13 @@ cdk.out
 .env
 .env.local
 .env.*.local
+
+# Python virtual environment
+venv/
+*.pyc
+__pycache__/
+
+# Deployment logs and outputs
+deploy.log
+response.json
+cdk.context.json

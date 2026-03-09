@@ -11,7 +11,7 @@ STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
 DENSITY_THRESHOLD = float(os.environ.get("DENSITY_THRESHOLD", "2.0"))
 
 SEARCH_QUERY = "lang:ja"
-LIMIT = 10
+LIMIT = 100
 
 # Language detection model (lazy loaded)
 _model = None

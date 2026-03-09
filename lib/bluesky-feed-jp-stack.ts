@@ -191,8 +191,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     // === EventBridge Scheduling ===
     const ingestRule = new events.Rule(this, 'IngestScheduleRule', {
-      schedule: events.Schedule.rate(cdk.Duration.hours(24)),
-      description: 'Run feed ingest every 24 hours',
+      schedule: events.Schedule.rate(cdk.Duration.hours(6)),
+      description: 'Run feed ingest every 6 hours',
     });
 
     ingestRule.addTarget(new targets.LambdaFunction(ingestLambda));
