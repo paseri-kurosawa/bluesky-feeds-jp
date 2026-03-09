@@ -1,0 +1,84 @@
+{
+  "_comment": "Density Scoring Configuration",
+  "_note_1": "すべてのポスト属性調整（reply, images, hashtags）は Sigmoid 正規化【前】に適用されます。",
+  "_note_2": "調整後の avg_norm は Sigmoid 関数によって 0-1 スケールに正規化されます。",
+  "_note_3": "算式: normalized_score = 1 / (1 + e^(-steepness * (adjusted_norm - midpoint)))",
+  "search": {
+    "description": "Bluesky 検索パラメータ",
+    "query": "lang:ja",
+    "query_note": "検索クエリ。言語フィルタリング用。",
+    "limit": 100,
+    "limit_note": "1回の検索で取得する最大ポスト数。",
+    "sort": "latest"
+  },
+  "language_detection": {
+    "description": "言語検出（fastText）パラメータ",
+    "target_language": "ja",
+    "confidence_threshold": 0.5,
+    "confidence_threshold_note": "日本語と判定する最小信頼度。confidence >= この値なら日本語と判定。"
+  },
+  "scoring": {
+    "sigmoid": {
+      "description": "Sigmoid 正規化パラメータ（avg_norm を 0-1 スケールに変換）",
+      "midpoint": 8.0,
+      "midpoint_note": "中心点。実測値ベース（2026-03-09）。データ分布が変動すれば調整の余地あり。",
+      "steepness": 0.5,
+      "steepness_note": "勾配。値が大きいほど急峻。現在は moderate steepness に設定。"
+    },
+    "density_threshold": {
+      "description": "Dense Feed の判定基準（Sigmoid 正規化後）",
+      "threshold": 0.6,
+      "threshold_note": "score < 0.6 の場合は Raw Feed のみに格納。score >= 0.6 の場合は Raw Feed と Dense Feed の両方に格納。",
+      "current_dense_rate": 0.318,
+      "rate_note": "現在の Dense Feed 率（2026-03-09 実測）: 31.8%（22件中7件）"
+    },
+    "compression_ratio": {
+      "description": "ノイズ検出のための zlib 圧縮率チェック",
+      "min": 0.2,
+      "max": 0.95,
+      "note": "ratio < min または ratio > max の場合は score = 0.0（ノイズと判定）"
+    },
+    "attributes": {
+      "description": "ポスト属性に基づく調整（正規化前の avg_norm に対して適用）",
+      "reply": {
+        "enabled": true,
+        "adjustment": 0.5,
+        "operation": "multiply",
+        "description": "返信は素点を0.5倍に減点"
+      },
+      "images": {
+        "enabled": true,
+        "adjustment": 1.0,
+        "operation": "add",
+        "description": "画像付きは1.0点加点"
+      },
+      "hashtags": {
+        "enabled": true,
+        "description": "ハッシュタグ数に基づく段階的調整（record.facets から抽出）",
+        "rules": [
+          {
+            "min": 1,
+            "max": 2,
+            "adjustment": 1.0,
+            "operation": "add",
+            "description": "ハッシュタグ1-2個は1.0点加点"
+          },
+          {
+            "min": 3,
+            "max": 4,
+            "adjustment": 0.0,
+            "operation": "add",
+            "description": "ハッシュタグ3-4個は変動なし"
+          },
+          {
+            "min": 5,
+            "max": null,
+            "adjustment": 1.0,
+            "operation": "subtract",
+            "description": "ハッシュタグ5個以上は1.0点減点"
+          }
+        ]
+      }
+    }
+  }
+}

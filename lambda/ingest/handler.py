@@ -4,14 +4,26 @@ import time
 import boto3
 from density_scorer import calculate_density_score
 
-# Configuration
+# Load configuration
+def load_config():
+    """Load configuration from config.json"""
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+_config = None
+
+def get_config():
+    """Get cached config"""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
+# Environment variables (credentials only)
 BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
 BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
 STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
-DENSITY_THRESHOLD = float(os.environ.get("DENSITY_THRESHOLD", "2.0"))
-
-SEARCH_QUERY = "lang:ja"
-LIMIT = 100
 
 # Language detection model (lazy loaded)
 _model = None
@@ -39,6 +51,11 @@ def is_japanese(text):
     if not text or len(text.strip()) == 0:
         return False
 
+    config = get_config()
+    lang_config = config["language_detection"]
+    target_lang = lang_config["target_language"]
+    confidence_threshold = lang_config["confidence_threshold"]
+
     model = get_language_model()
     prediction = model.predict(text.replace("\n", " "))
     label, confidence = prediction[0][0], prediction[1][0]
@@ -46,12 +63,33 @@ def is_japanese(text):
     # label format: '__label__ja'
     lang_code = label.replace("__label__", "")
 
-    return lang_code == "ja" and confidence > 0.5
+    return lang_code == target_lang and confidence >= confidence_threshold
 
 def has_any_labels(post):
     """Exclude posts that have any labels (moderation applied)"""
     labels = getattr(post, "labels", None)
     return bool(labels)
+
+def extract_hashtag_count(record):
+    """Extract hashtag count from record.facets"""
+    if not record:
+        return 0
+
+    facets = getattr(record, "facets", None)
+    if not facets:
+        return 0
+
+    hashtag_count = 0
+    for facet in facets:
+        # Facet has features list; check for hashtag type
+        features = getattr(facet, "features", None) or []
+        for feature in features:
+            feature_type = getattr(feature, "$type", None)
+            # Hashtag facet type is "app.bsky.richtext.facet#tag"
+            if feature_type and "tag" in feature_type:
+                hashtag_count += 1
+
+    return hashtag_count
 
 def lambda_handler(event, context):
     """
@@ -73,11 +111,17 @@ def lambda_handler(event, context):
         client.login(BSKY_HANDLE, BSKY_APP_PASSWORD)
 
         # Search posts
-        print(f"Searching for posts: {SEARCH_QUERY}")
+        config = get_config()
+        search_config = config["search"]
+        search_query = search_config["query"]
+        search_limit = search_config["limit"]
+        search_sort = search_config["sort"]
+
+        print(f"Searching for posts: {search_query}")
         res = client.app.bsky.feed.search_posts({
-            "q": SEARCH_QUERY,
-            "sort": "latest",
-            "limit": LIMIT,
+            "q": search_query,
+            "sort": search_sort,
+            "limit": search_limit,
         })
 
         # Process results
@@ -105,7 +149,7 @@ def lambda_handler(event, context):
                 skipped_by_reason["moderation_labels"] += 1
                 continue
 
-            # Extract text
+            # Extract text and post attributes
             record = getattr(post, "record", None)
             text = getattr(record, "text", "") if record else ""
 
@@ -115,8 +159,22 @@ def lambda_handler(event, context):
                 skipped_by_reason["non_japanese"] += 1
                 continue
 
-            # Calculate density score
-            density_score = calculate_density_score(text)
+            # Extract post attributes
+            is_reply = bool(getattr(record, "reply", None)) if record else False
+
+            # Check for images in embed
+            has_images = False
+            embed = getattr(record, "embed", None) if record else None
+            if embed:
+                # Check for images field (varies by embed type)
+                images = getattr(embed, "images", None)
+                has_images = bool(images)
+
+            # Extract hashtag count from facets
+            hashtag_count = extract_hashtag_count(record)
+
+            # Calculate density score with attributes
+            density_score = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
 
             # Convert indexed_at to timestamp
             ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))

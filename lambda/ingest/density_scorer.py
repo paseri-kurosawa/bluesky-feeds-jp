@@ -4,17 +4,20 @@ Density-based content quality scoring module using .ftz model.
 Simple, lightweight scoring:
 1. zlib compression ratio check (noise detection)
 2. Word vector norm extraction from .ftz model
+3. Attribute-based adjustments (reply, images, hashtags)
 """
 
 import zlib
 import os
 import re
 import math
-from typing import List, Tuple
+import json
+from typing import List, Tuple, Dict, Any
 
 # Global scope for warm starts
 _ft_model = None
 _janome_tokenizer = None
+_config = None
 
 def get_fasttext_model():
     """Lazy load fastText .ftz model (pre-cached in Lambda image)"""
@@ -47,6 +50,39 @@ def get_janome_tokenizer():
         _janome_tokenizer = Tokenizer()
         print("[JANOME_LOAD] Tokenizer loaded successfully")
     return _janome_tokenizer
+
+def load_config() -> Dict[str, Any]:
+    """Load scoring configuration from config.json"""
+    global _config
+    if _config is None:
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        print(f"[CONFIG_LOAD] Loading config from {config_path}")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                _config = json.load(f)
+            print("[CONFIG_LOAD] Config loaded successfully")
+        except Exception as e:
+            print(f"[CONFIG_ERROR] Failed to load config: {e}")
+            # Fallback to hardcoded defaults
+            _config = {
+                "scoring": {
+                    "sigmoid": {"midpoint": 8.0, "steepness": 0.5},
+                    "compression_ratio": {"min": 0.2, "max": 0.95},
+                    "attributes": {
+                        "reply": {"enabled": True, "adjustment": 0.5, "operation": "multiply"},
+                        "images": {"enabled": True, "adjustment": 1.0, "operation": "add"},
+                        "hashtags": {
+                            "enabled": True,
+                            "rules": [
+                                {"min": 1, "max": 2, "adjustment": 1.0, "operation": "add"},
+                                {"min": 3, "max": 4, "adjustment": 0.0, "operation": "add"},
+                                {"min": 5, "max": None, "adjustment": 1.0, "operation": "subtract"}
+                            ]
+                        }
+                    }
+                }
+            }
+    return _config
 
 def calculate_compression_ratio(text: str) -> float:
     """
@@ -182,28 +218,109 @@ def extract_word_vector_norms(text: str) -> List[Tuple[str, float]]:
     print(f"[VECTORS_EXTRACTED] {len(words_with_norms)} tokens with vectors out of {len(tokens)}")
     return words_with_norms
 
-def calculate_density_score(text: str) -> float:
+
+def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: bool, hashtag_count: int) -> Tuple[float, str]:
     """
-    Calculate density score for a text.
+    Apply attribute-based adjustments to avg_norm before sigmoid normalization.
+    Adjustments are loaded from config.json.
+
+    Args:
+        avg_norm: Average word vector norm
+        is_reply: Whether post is a reply
+        has_images: Whether post has images
+        hashtag_count: Number of hashtags (from record.facets)
+
+    Returns:
+        Tuple of (adjusted_norm, adjustment_log)
+    """
+    config = load_config()
+    attr_config = config["scoring"]["attributes"]
+    adjusted_norm = avg_norm
+    adjustments = []
+
+    # Reply adjustment
+    if is_reply and attr_config["reply"]["enabled"]:
+        reply_conf = attr_config["reply"]
+        if reply_conf["operation"] == "multiply":
+            adjusted_norm *= reply_conf["adjustment"]
+            adjustments.append(f"reply:×{reply_conf['adjustment']}")
+        elif reply_conf["operation"] == "add":
+            adjusted_norm += reply_conf["adjustment"]
+            adjustments.append(f"reply:+{reply_conf['adjustment']}")
+
+    # Images adjustment
+    if has_images and attr_config["images"]["enabled"]:
+        img_conf = attr_config["images"]
+        if img_conf["operation"] == "add":
+            adjusted_norm += img_conf["adjustment"]
+            adjustments.append(f"images:+{img_conf['adjustment']}")
+
+    # Hashtags adjustment (rule-based)
+    if hashtag_count > 0 and attr_config["hashtags"]["enabled"]:
+        for rule in attr_config["hashtags"]["rules"]:
+            rule_min = rule["min"]
+            rule_max = rule["max"]
+
+            # Check if hashtag_count matches this rule
+            if rule_max is None:
+                # No upper limit
+                if hashtag_count >= rule_min:
+                    if rule["operation"] == "add":
+                        adjusted_norm += rule["adjustment"]
+                        if rule["adjustment"] != 0:
+                            adjustments.append(f"hashtags({hashtag_count}):+{rule['adjustment']}")
+                        else:
+                            adjustments.append(f"hashtags({hashtag_count}):±0.0")
+                    elif rule["operation"] == "subtract":
+                        adjusted_norm -= rule["adjustment"]
+                        adjustments.append(f"hashtags({hashtag_count}):−{rule['adjustment']}")
+                    break
+            else:
+                # Both min and max specified
+                if rule_min <= hashtag_count <= rule_max:
+                    if rule["operation"] == "add":
+                        adjusted_norm += rule["adjustment"]
+                        if rule["adjustment"] != 0:
+                            adjustments.append(f"hashtags({hashtag_count}):+{rule['adjustment']}")
+                        else:
+                            adjustments.append(f"hashtags({hashtag_count}):±0.0")
+                    break
+
+    adjustment_log = ", ".join(adjustments) if adjustments else "none"
+    return adjusted_norm, adjustment_log
+
+def calculate_density_score(text: str, is_reply: bool = False, has_images: bool = False, hashtag_count: int = 0) -> float:
+    """
+    Calculate density score for a text with attribute adjustments.
 
     Algorithm:
     - Step 1: Check zlib compression ratio (noise detection)
     - Step 2: Extract word vectors using .ftz model
     - Step 3: Calculate average vector norm
+    - Step 4: Apply attribute adjustments (before sigmoid normalization)
+    - Step 5: Normalize to 0-1 scale using sigmoid
 
     Args:
         text: Input text
+        is_reply: Whether post is a reply (default: False)
+        has_images: Whether post has images (default: False)
+        hashtag_count: Number of hashtags from record.facets (default: 0)
 
     Returns:
         Density score (0-1 scale), or 0 if text fails checks
     """
     try:
         # Step 1: Compression ratio check
+        config = load_config()
+        comp_conf = config["scoring"]["compression_ratio"]
+        comp_min = comp_conf["min"]
+        comp_max = comp_conf["max"]
+
         comp_ratio = calculate_compression_ratio(text)
 
         # Noise detection: ratio too low (random) or too high (repetitive)
-        if comp_ratio < 0.20 or comp_ratio > 0.95:
-            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f})")
+        if comp_ratio < comp_min or comp_ratio > comp_max:
+            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, min={comp_min}, max={comp_max})")
             return 0.0
 
         # Step 2: Extract word vectors
@@ -213,23 +330,29 @@ def calculate_density_score(text: str) -> float:
             print("[DENSITY] No word vectors found")
             return 0.0
 
-        # Step 3: Calculate average norm and normalize
+        # Step 3: Calculate average norm
         norms = [norm for _, norm in words_with_norms]
         avg_norm = sum(norms) / len(norms)
         min_norm = min(norms)
         max_norm = max(norms)
 
-        # Normalize to 0-1 scale using sigmoid
-        # Sigmoid function: 1 / (1 + e^(-k*(x - x0)))
-        # where x0 = midpoint (avg_norm where output = 0.5), k = steepness
-        # x0=8 (center around observed average), k=0.5 (moderate steepness)
-        sigmoid_midpoint = 8.0
-        sigmoid_steepness = 0.5
-        normalized_score = 1.0 / (1.0 + math.exp(-sigmoid_steepness * (avg_norm - sigmoid_midpoint)))
+        # Step 4: Apply attribute adjustments
+        adjusted_norm, adjustment_log = apply_attribute_adjustments(avg_norm, is_reply, has_images, hashtag_count)
+
+        # Step 5: Normalize to 0-1 scale using sigmoid
+        # Load sigmoid parameters from config
+        config = load_config()
+        sigmoid_conf = config["scoring"]["sigmoid"]
+        sigmoid_midpoint = sigmoid_conf["midpoint"]
+        sigmoid_steepness = sigmoid_conf["steepness"]
+        normalized_score = 1.0 / (1.0 + math.exp(-sigmoid_steepness * (adjusted_norm - sigmoid_midpoint)))
+
+        # Clamp score to 0-1 range (safety check)
+        normalized_score = max(0.0, min(1.0, normalized_score))
 
         # Detailed analysis log
         print(f"[VECTOR_ANALYSIS] min={min_norm:.4f}, max={max_norm:.4f}, avg={avg_norm:.4f}, token_count={len(words_with_norms)}")
-        print(f"[DENSITY_SCORE] {normalized_score:.3f} (tokens={len(words_with_norms)}, avg_norm={avg_norm:.4f}, comp_ratio={comp_ratio:.3f})")
+        print(f"[DENSITY_SCORE] {normalized_score:.3f} (avg_norm={avg_norm:.4f}→{adjusted_norm:.4f}, adjustments=[{adjustment_log}], comp_ratio={comp_ratio:.3f})")
         return normalized_score
 
     except Exception as e:
