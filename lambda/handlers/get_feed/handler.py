@@ -28,9 +28,6 @@ def lambda_handler(event, context):
     - cursor: pagination token
     """
     try:
-        # Debug: log incoming event
-        print(f"Event: {json.dumps(event)}")
-
         # Parse query params
         params = event.get("queryStringParameters") or {}
 
@@ -96,7 +93,7 @@ def lambda_handler(event, context):
                 max_score = float(max_score_str)
                 offset = int(offset_str)
             except Exception as e:
-                print(f"Cursor parse error: {e}, raw cursor: {cursor}")
+                # Cursor parse error - log for debugging if needed
                 return {
                     "statusCode": 400,
                     "body": json.dumps({"error": f"Invalid cursor format: {str(e)}"})

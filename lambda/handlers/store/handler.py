@@ -31,10 +31,7 @@ def lambda_handler(event, context):
     }
     """
     try:
-        print(f"Store Lambda event: {json.dumps(event)}")
-
         items = event.get("items", [])
-        print(f"Items count: {len(items)}")
 
         if not items:
             return {"stored_raw": 0, "stored_dense": 0, "note": "no items"}
@@ -73,8 +70,11 @@ def lambda_handler(event, context):
         r.zremrangebyrank("feed:raw:jp:v1", 0, -MAX_ITEMS - 1)
         r.zremrangebyrank("feed:dense:jp:v1", 0, -MAX_ITEMS - 1)
 
-        print(f"Stored - Raw: {raw_stored}, Dense: {dense_stored}")
-        print(f"Valkey - Raw ZCARD: {r.zcard('feed:raw:jp:v1')}, Dense ZCARD: {r.zcard('feed:dense:jp:v1')}")
+        # Log final storage stats
+        raw_zcard = r.zcard("feed:raw:jp:v1")
+        dense_zcard = r.zcard("feed:dense:jp:v1")
+        print(f"[STORE] Stored - Raw: {raw_stored}, Dense: {dense_stored}")
+        print(f"[STORE] Final - Raw ZCARD: {raw_zcard}, Dense ZCARD: {dense_zcard}")
 
         return {
             "stored_raw": raw_stored,
@@ -82,7 +82,8 @@ def lambda_handler(event, context):
         }
 
     except Exception as e:
-        print(f"Store Lambda error: {str(e)}")
+        # Log error for debugging
+        print(f"ERROR: Store Lambda failed - {str(e)}")
         return {
             "error": str(e),
             "stored_raw": 0,
