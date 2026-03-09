@@ -14,6 +14,7 @@ from typing import List, Tuple
 
 # Global scope for warm starts
 _ft_model = None
+_janome_tokenizer = None
 
 def get_fasttext_model():
     """Lazy load fastText .ftz model (pre-cached in Lambda image)"""
@@ -37,6 +38,16 @@ def get_fasttext_model():
 
     return _ft_model
 
+def get_janome_tokenizer():
+    """Lazy load Janome tokenizer (cached for warm starts)"""
+    global _janome_tokenizer
+    if _janome_tokenizer is None:
+        from janome.tokenizer import Tokenizer
+        print("[JANOME_LOAD] Initializing Janome tokenizer...")
+        _janome_tokenizer = Tokenizer()
+        print("[JANOME_LOAD] Tokenizer loaded successfully")
+    return _janome_tokenizer
+
 def calculate_compression_ratio(text: str) -> float:
     """
     Calculate zlib compression ratio.
@@ -58,23 +69,75 @@ def calculate_compression_ratio(text: str) -> float:
 
 def tokenize_japanese(text: str) -> List[str]:
     """
-    Simple Japanese tokenization.
+    Japanese tokenization using Janome morphological analyzer.
 
-    Split on punctuation and whitespace, filter short tokens.
+    Extracts content words only:
+    - 名詞 (nouns)
+    - 動詞 (verbs)
+    - 形容詞 (adjectives)
+    - 副詞 (adverbs)
+
+    Filters out:
+    - Particles (助詞)
+    - Auxiliary verbs (助動詞)
+    - Symbols (記号)
+    - Non-content nouns: pronouns, numbers, suffixes, non-independent nouns
 
     Args:
         text: Input text
 
     Returns:
-        List of tokens
+        List of content word surface forms
     """
-    # Replace common punctuation/symbols with spaces
-    text = re.sub(r'[、。！？…「」『』【】（）\[\]{}（）\n\r\t]', ' ', text)
-    # Split on whitespace
-    tokens = text.split()
-    # Filter out very short tokens
-    tokens = [t for t in tokens if len(t) > 1]
-    return tokens
+    tokenizer = get_janome_tokenizer()
+    content_words = []
+
+    # Target POS tags (part-of-speech)
+    target_pos_prefixes = ('名詞', '動詞', '形容詞', '副詞')
+
+    # Exclude specific noun subtypes that aren't content-bearing
+    exclude_pos_patterns = (
+        '名詞,非自立',      # Non-independent nouns
+        '名詞,代名詞',      # Pronouns
+        '名詞,数',          # Numbers
+        '名詞,接尾',        # Suffixes
+    )
+
+    try:
+        for token in tokenizer.tokenize(text):
+            # token.part_of_speech: "品詞,品詞細分類1,品詞細分類2,..."
+            # token.surface: surface form (表層形)
+            pos = token.part_of_speech
+            surface = token.surface
+
+            # Skip empty or whitespace-only tokens
+            if not surface or not surface.strip():
+                continue
+
+            # Check if POS starts with target categories
+            if not any(pos.startswith(prefix) for prefix in target_pos_prefixes):
+                continue
+
+            # Exclude non-content noun subtypes
+            if any(pos.startswith(pattern) for pattern in exclude_pos_patterns):
+                continue
+
+            # Length filter: exclude very short tokens (1 character)
+            # Exception: kanji single characters are often meaningful
+            if len(surface) == 1 and not ('\u4e00' <= surface <= '\u9fff'):
+                continue
+
+            content_words.append(surface)
+
+    except Exception as e:
+        print(f"[TOKENIZE_ERROR] Janome error: {e}")
+        import traceback
+        traceback.print_exc()
+        # Fallback: return empty list (will result in score=0)
+        return []
+
+    print(f"[JANOME_TOKENS] Extracted {len(content_words)} content words")
+    return content_words
 
 def extract_word_vector_norms(text: str) -> List[Tuple[str, float]]:
     """
