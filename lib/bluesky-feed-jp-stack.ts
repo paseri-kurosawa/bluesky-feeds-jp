@@ -122,6 +122,21 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       },
     });
 
+    // === S3 Bucket for Badword Analysis ===
+    const badwordBucket = new s3.Bucket(this, 'BadwordAnalysisBucket', {
+      bucketName: `bluesky-feed-badword-analysis-${env.CDK_DEFAULT_ACCOUNT}`,
+      versioned: false,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      lifecycleRules: [
+        {
+          // Delete badword-analysis files after 7 days (intermediate analysis files)
+          prefix: 'badword-analysis/',
+          expiration: cdk.Duration.days(7),
+        },
+      ],
+    });
+
     // 4. Ingest Lambda (Container Image - VPC外)
     const ingestLambda = new lambda.DockerImageFunction(this, 'IngestLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../lambda/ingest')),
@@ -131,7 +146,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       environment: {
         BSKY_HANDLE: env.BSKY_HANDLE || '',
         BSKY_APP_PASSWORD: env.BSKY_APP_PASSWORD || '',
-        DENSITY_THRESHOLD: env.DENSITY_THRESHOLD || '2.0',
+        DENSITY_THRESHOLD: env.DENSITY_THRESHOLD || '0.6',
+        S3_BUCKET: badwordBucket.bucketName,
         STORE_FUNCTION_NAME: '', // Will be set after creation
       },
     });
@@ -149,7 +165,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       securityGroups: [lambdaSecurityGroup],
       environment: {
         VALKEY_ENDPOINT: valkeyEndpoint,
-        DENSITY_THRESHOLD: env.DENSITY_THRESHOLD || '2.0',
+        DENSITY_THRESHOLD: env.DENSITY_THRESHOLD || '0.6',
       },
     });
 
@@ -159,43 +175,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     // Grant Ingest permission to invoke Store
     storeLambda.grantInvoke(ingestLambda);
 
-    // === S3 Bucket for Badword Analysis ===
-    const badwordBucket = new s3.Bucket(this, 'BadwordAnalysisBucket', {
-      bucketName: `bluesky-feed-badword-analysis-${env.CDK_DEFAULT_ACCOUNT}`,
-      versioned: false,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-    });
-
-    // 6. Extract Lambda (VPC)
-    const extractLambda = new lambda.Function(this, 'ExtractLambda', {
-      runtime: lambda.Runtime.PYTHON_3_11,
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/extract'), {
-        bundling: {
-          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
-          command: [
-            'bash', '-c',
-            'pip install -r requirements.txt -t /asset-output && cp -r . /asset-output/',
-          ],
-        },
-      }),
-      handler: 'handler.lambda_handler',
-      timeout: cdk.Duration.seconds(300),
-      memorySize: 2048,
-      logRetention: logs.RetentionDays.ONE_MONTH,
-      vpc,
-      securityGroups: [lambdaSecurityGroup],
-      environment: {
-        BSKY_HANDLE: env.BSKY_HANDLE || '',
-        BSKY_APP_PASSWORD: env.BSKY_APP_PASSWORD || '',
-        VALKEY_ENDPOINT: valkeyEndpoint,
-        S3_BUCKET: badwordBucket.bucketName,
-        S3_PREFIX: 'badword-analysis',
-      },
-    });
-
-    // Grant Extract Lambda permission to write to S3
-    badwordBucket.grantWrite(extractLambda);
+    // Grant Ingest Lambda permission to read and write to S3
+    badwordBucket.grantReadWrite(ingestLambda);
 
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {
@@ -247,12 +228,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       description: 'Valkey Serverless endpoint',
     });
 
-    new cdk.CfnOutput(this, 'ExtractLambdaFunctionName', {
-      value: extractLambda.functionName,
-      description: 'Extract Lambda function name for manual invocation',
-    });
-
-    new cdk.CfnOutput(this, 'BadwordAnalysisBucket', {
+    new cdk.CfnOutput(this, 'BadwordBucket', {
       value: badwordBucket.bucketName,
       description: 'S3 bucket for badword analysis output',
     });

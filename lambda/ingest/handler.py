@@ -2,7 +2,8 @@ import os
 import json
 import time
 import boto3
-from density_scorer import calculate_density_score
+from datetime import datetime
+from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms
 
 # Load configuration
 def load_config():
@@ -24,6 +25,8 @@ def get_config():
 BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
 BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
 STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
+DENSITY_THRESHOLD = float(os.environ.get("DENSITY_THRESHOLD", "0.6"))
 
 # Language detection model (lazy loaded)
 _model = None
@@ -126,10 +129,17 @@ def lambda_handler(event, context):
 
         # Process results
         items = []
+        dense_texts = []  # Collect texts for Dense feed
+        dense_base_forms = []  # Collect base forms (見出し語) for badword dictionary creation
         skipped_by_reason = {
             "invalid_fields": 0,
             "moderation_labels": 0,
             "non_japanese": 0,
+        }
+        badword_stats = {
+            "total_posts_with_badwords": 0,
+            "total_badword_matches": 0,
+            "badword_distribution": {},  # Count by number of matches per post
         }
 
         posts = getattr(res, "posts", []) or []
@@ -174,7 +184,15 @@ def lambda_handler(event, context):
             hashtag_count = extract_hashtag_count(record)
 
             # Calculate density score with attributes
-            density_score = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
+            density_score, badword_count = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
+
+            # Record badword statistics
+            if badword_count > 0:
+                badword_stats["total_posts_with_badwords"] += 1
+                badword_stats["total_badword_matches"] += badword_count
+                # Track distribution of matches per post
+                key = str(badword_count)
+                badword_stats["badword_distribution"][key] = badword_stats["badword_distribution"].get(key, 0) + 1
 
             # Convert indexed_at to timestamp
             ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))
@@ -185,6 +203,19 @@ def lambda_handler(event, context):
                 "density_score": density_score,
             })
 
+            # Collect text and base forms if it will go to Dense feed
+            if density_score >= DENSITY_THRESHOLD:
+                # Escape newlines for single-line format
+                text_escaped = text.replace("\n", "\\n").replace("\r", "\\r")
+                dense_texts.append(text_escaped)
+
+                # Extract base forms (見出し語) for badword dictionary creation
+                try:
+                    base_forms = extract_base_forms(text)
+                    dense_base_forms.extend(base_forms)
+                except Exception as e:
+                    print(f"[EXTRACT_BASE_FORMS_ERROR] {uri}: {e}")
+
             print(f"[ADDED] {uri} (density={density_score:.3f})")
 
         print(f"\n=== Processing Summary ===")
@@ -193,10 +224,62 @@ def lambda_handler(event, context):
         print(f"  - Moderation labels: {skipped_by_reason['moderation_labels']}")
         print(f"  - Non-Japanese: {skipped_by_reason['non_japanese']}")
         print(f"  - Passed filters: {len(items)}")
+
+        # Badword statistics
+        print(f"\n=== Badword Analysis ===")
+        print(f"Posts with badwords: {badword_stats['total_posts_with_badwords']}")
+        print(f"Total badword matches: {badword_stats['total_badword_matches']}")
+        if badword_stats['badword_distribution']:
+            print(f"Distribution by matches per post:")
+            for match_count in sorted(badword_stats['badword_distribution'].keys(), key=int):
+                count = badword_stats['badword_distribution'][match_count]
+                print(f"  - {match_count} match(es): {count} post(s)")
+
+        print(f"\n=== Dense Feed Statistics ===")
+        dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
+        print(f"Dense posts: {len(dense_texts)} / {len(items)} ({dense_rate:.1f}%)")
         print(f"=========================\n")
 
         # Calculate total skipped
         total_skipped = sum(skipped_by_reason.values())
+
+        # Save dense texts to S3
+        s3_url = None
+        s3_base_forms_url = None
+        if dense_texts and S3_BUCKET:
+            try:
+                s3_client = boto3.client("s3")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                # Save raw texts
+                s3_key = f"badword-analysis/dense_posts_{timestamp}.txt"
+                content = "\n".join(dense_texts)
+
+                s3_client.put_object(
+                    Bucket=S3_BUCKET,
+                    Key=s3_key,
+                    Body=content.encode("utf-8"),
+                    ContentType="text/plain; charset=utf-8",
+                )
+                s3_url = f"s3://{S3_BUCKET}/{s3_key}"
+                print(f"[S3] Saved {len(dense_texts)} dense post texts to {s3_url}")
+
+                # Save base forms (見出し語) - 1 word per line
+                if dense_base_forms:
+                    s3_base_forms_key = f"badword-analysis/dense_posts_base_forms_{timestamp}.txt"
+                    base_forms_content = "\n".join(dense_base_forms)
+
+                    s3_client.put_object(
+                        Bucket=S3_BUCKET,
+                        Key=s3_base_forms_key,
+                        Body=base_forms_content.encode("utf-8"),
+                        ContentType="text/plain; charset=utf-8",
+                    )
+                    s3_base_forms_url = f"s3://{S3_BUCKET}/{s3_base_forms_key}"
+                    print(f"[S3] Saved {len(dense_base_forms)} base forms to {s3_base_forms_url}")
+
+            except Exception as e:
+                print(f"[S3 ERROR] Failed to save dense texts: {str(e)}")
 
         # Invoke Store Lambda asynchronously
         if items:
@@ -213,6 +296,10 @@ def lambda_handler(event, context):
         return {
             "fetched": len(items),
             "skipped": total_skipped,
+            "dense_posts": len(dense_texts),
+            "total_base_forms": len(dense_base_forms),
+            "s3_url": s3_url,
+            "s3_base_forms_url": s3_base_forms_url,
         }
 
     except Exception as e:

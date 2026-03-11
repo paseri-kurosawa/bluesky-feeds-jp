@@ -12,12 +12,15 @@ import os
 import re
 import math
 import json
+import boto3
 from typing import List, Tuple, Dict, Any
 
 # Global scope for warm starts
 _ft_model = None
 _janome_tokenizer = None
 _config = None
+_badwords_config = None
+_s3_client = None
 
 def get_fasttext_model():
     """Lazy load fastText .ftz model (pre-cached in Lambda image)"""
@@ -83,6 +86,72 @@ def load_config() -> Dict[str, Any]:
                 }
             }
     return _config
+
+def load_badwords_config() -> Dict[str, Any]:
+    """
+    Load badword dictionary from S3 (text format: 1 word per line).
+
+    【仕様】
+    ファイル形式: S3 の badwords/dictionary.txt
+    内容: UTF-8 テキスト、1行1単語（見出し語ベース）
+    エンコーディング: UTF-8
+    マッチング方式: 見出し語（基本形）ベース、case-insensitive
+
+    【重要】
+    - Janome で形態素解析した見出し語と比較
+    - 活用形は自動的に見出し語に正規化される
+    - 例: 『殺す』『殺そう』『殺した』 → 全て『殺す』の見出し語でマッチ
+    - 例: 『言う』『言った』『言い張る』 → 対応する見出し語でマッチ
+
+    【ペナルティ】
+    - 固定値: 0.75（25% 減衰）
+    - 複数バッドワード時: adjusted_norm *= (0.75 ^ count)
+    - 1つ: 0.75倍（25% 減衰）
+    - 2つ: 0.5625倍（43.75% 減衰）
+    - 3つ: 0.4219倍（57.81% 減衰）
+
+    【適用段階】
+    - Step 4.4: Hashtags 調整の直後、シグモイド正規化前に適用
+    """
+    global _badwords_config
+    if _badwords_config is None:
+        s3_bucket = os.environ.get("S3_BUCKET", "")
+
+        if not s3_bucket:
+            print("[BADWORDS_LOAD] S3_BUCKET not set, badwords disabled")
+            _badwords_config = {"badwords": [], "penalty": 0.75}
+            return _badwords_config
+
+        try:
+            global _s3_client
+            if _s3_client is None:
+                _s3_client = boto3.client("s3")
+
+            print(f"[BADWORDS_LOAD] Loading from s3://{s3_bucket}/badwords/dictionary.txt")
+            response = _s3_client.get_object(
+                Bucket=s3_bucket,
+                Key="badwords/dictionary.txt"
+            )
+
+            # Read text format: 1 word per line (UTF-8)
+            # Empty lines are automatically filtered out
+            text_content = response["Body"].read().decode("utf-8")
+            badwords = [word.strip() for word in text_content.split("\n") if word.strip()]
+
+            _badwords_config = {
+                "badwords": badwords,
+                "penalty": 0.75  # Fixed penalty: 25% attenuation per badword
+            }
+
+            badword_count = len(badwords)
+            print(f"[BADWORDS_LOAD] Loaded {badword_count} badwords (text format, 1 word per line, base form matching)")
+
+        except Exception as e:
+            print(f"[BADWORDS_LOAD] Failed to load badwords: {e}")
+            # Fallback: empty badwords (badword filtering disabled)
+            _badwords_config = {"badwords": [], "penalty": 0.75}
+
+    return _badwords_config
 
 def calculate_compression_ratio(text: str) -> float:
     """
@@ -175,6 +244,67 @@ def tokenize_japanese(text: str) -> List[str]:
     print(f"[JANOME_TOKENS] Extracted {len(content_words)} content words")
     return content_words
 
+def extract_base_forms(text: str) -> List[str]:
+    """
+    Extract base forms (見出し語) from Japanese text using Janome.
+
+    Same filtering as tokenize_japanese, but returns base forms instead of surface forms.
+    For example: 「殺そう」→ 「殺す」（base form）
+
+    Args:
+        text: Input text
+
+    Returns:
+        List of base forms (見出し語)
+    """
+    tokenizer = get_janome_tokenizer()
+    base_forms = []
+
+    # Target POS tags (part-of-speech)
+    target_pos_prefixes = ('名詞', '動詞', '形容詞', '副詞')
+
+    # Exclude specific noun subtypes that aren't content-bearing
+    exclude_pos_patterns = (
+        '名詞,非自立',      # Non-independent nouns
+        '名詞,代名詞',      # Pronouns
+        '名詞,数',          # Numbers
+        '名詞,接尾',        # Suffixes
+    )
+
+    try:
+        for token in tokenizer.tokenize(text):
+            pos = token.part_of_speech
+            surface = token.surface
+            base = token.base_form  # 見出し語（基本形）
+
+            # Skip empty or whitespace-only tokens
+            if not surface or not surface.strip():
+                continue
+
+            # Check if POS starts with target categories
+            if not any(pos.startswith(prefix) for prefix in target_pos_prefixes):
+                continue
+
+            # Exclude non-content noun subtypes
+            if any(pos.startswith(pattern) for pattern in exclude_pos_patterns):
+                continue
+
+            # Length filter: exclude very short tokens (1 character)
+            # Exception: kanji single characters are often meaningful
+            if len(surface) == 1 and not ('\u4e00' <= surface <= '\u9fff'):
+                continue
+
+            base_forms.append(base)
+
+    except Exception as e:
+        print(f"[EXTRACT_BASE_FORMS_ERROR] Janome error: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+    print(f"[EXTRACT_BASE_FORMS] Extracted {len(base_forms)} base forms")
+    return base_forms
+
 def extract_word_vector_norms(text: str) -> List[Tuple[str, float]]:
     """
     Extract word vector norms using .ftz model.
@@ -219,7 +349,40 @@ def extract_word_vector_norms(text: str) -> List[Tuple[str, float]]:
     return words_with_norms
 
 
-def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: bool, hashtag_count: int) -> Tuple[float, str]:
+def count_badwords_in_tokens(tokens: List[str]) -> int:
+    """
+    Count how many badwords appear in the token list.
+
+    【重要な仕様】
+    - tokens: Janome で形態素解析された見出し語（基本形）のリスト
+    - マッチング方式: 大文字小文字を区別しない（case-insensitive）
+    - 辞書: S3 から読み込まれた badwords/dictionary.txt（1行1単語、見出し語ベース）
+
+    【動作】
+    各トークン（見出し語）が辞書に含まれるかチェック → マッチ数を返す
+
+    Args:
+        tokens: List of base forms (見出し語) from Janome morphological analysis
+
+    Returns:
+        Number of badword matches found in the token list
+    """
+    badwords_config = load_badwords_config()
+    badwords = badwords_config.get("badwords", [])
+
+    if not badwords:
+        return 0
+
+    # Create lowercase set for case-insensitive matching
+    # 見出し語と辞書を case-insensitive で比較
+    badwords_lower = {word.lower() for word in badwords}
+    tokens_lower = [token.lower() for token in tokens]
+
+    # Count matches (辞書に含まれるトークン数)
+    badword_count = sum(1 for token in tokens_lower if token in badwords_lower)
+    return badword_count
+
+def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: bool, hashtag_count: int, tokens: List[str] = None) -> Tuple[float, str]:
     """
     Apply attribute-based adjustments to avg_norm before sigmoid normalization.
     Adjustments are loaded from config.json.
@@ -229,6 +392,7 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
         is_reply: Whether post is a reply
         has_images: Whether post has images
         hashtag_count: Number of hashtags (from record.facets)
+        tokens: List of tokenized words for badword checking (optional)
 
     Returns:
         Tuple of (adjusted_norm, adjustment_log)
@@ -286,10 +450,28 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
                             adjustments.append(f"hashtags({hashtag_count}):±0.0")
                     break
 
+    # Step 4.4: Badword adjustment（Hashtags の直後）
+    # 【仕様】
+    # - 見出し語ベースのバッドワードマッチング（活用形は自動正規化）
+    # - ペナルティ: 0.75（25% 減衰）
+    # - 複数マッチ時: 乗算的に適用 adjusted_norm *= (0.75 ^ count)
+    # - 例: 2つのバッドワード → adjusted_norm *= 0.75^2 = 0.5625（43.75% 減衰）
+    if tokens:
+        badword_count = count_badwords_in_tokens(tokens)
+        if badword_count > 0:
+            badwords_config = load_badwords_config()
+            penalty = badwords_config.get("penalty", 0.75)
+            # Apply penalty multiplicatively: adjusted_norm *= penalty^badword_count
+            # 複数のバッドワードが含まれる場合、ペナルティは指数的に適用される
+            multiplier = penalty ** badword_count
+            adjusted_norm *= multiplier
+            adjustments.append(f"badwords({badword_count}):×{multiplier:.4f}")
+            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s), penalty multiplier={multiplier:.4f} (0.75^{badword_count})")
+
     adjustment_log = ", ".join(adjustments) if adjustments else "none"
     return adjusted_norm, adjustment_log
 
-def calculate_density_score(text: str, is_reply: bool = False, has_images: bool = False, hashtag_count: int = 0) -> float:
+def calculate_density_score(text: str, is_reply: bool = False, has_images: bool = False, hashtag_count: int = 0) -> Tuple[float, int]:
     """
     Calculate density score for a text with attribute adjustments.
 
@@ -307,7 +489,9 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         hashtag_count: Number of hashtags from record.facets (default: 0)
 
     Returns:
-        Density score (0-1 scale), or 0 if text fails checks
+        Tuple of (density_score, badword_count):
+        - density_score: Density score (0-1 scale), or 0 if text fails checks
+        - badword_count: Number of badwords matched in the text
     """
     try:
         # Step 1: Compression ratio check
@@ -321,14 +505,14 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         # Noise detection: ratio too low (random) or too high (repetitive)
         if comp_ratio < comp_min or comp_ratio > comp_max:
             print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, min={comp_min}, max={comp_max})")
-            return 0.0
+            return 0.0, 0
 
         # Step 2: Extract word vectors
         words_with_norms = extract_word_vector_norms(text)
 
         if not words_with_norms:
             print("[DENSITY] No word vectors found")
-            return 0.0
+            return 0.0, 0
 
         # Step 3: Calculate average norm
         norms = [norm for _, norm in words_with_norms]
@@ -336,8 +520,14 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         min_norm = min(norms)
         max_norm = max(norms)
 
-        # Step 4: Apply attribute adjustments
-        adjusted_norm, adjustment_log = apply_attribute_adjustments(avg_norm, is_reply, has_images, hashtag_count)
+        # Extract tokens for badword checking
+        tokens = tokenize_japanese(text)
+
+        # Count badwords for statistics
+        badword_count = count_badwords_in_tokens(tokens)
+
+        # Step 4: Apply attribute adjustments (including badword penalty)
+        adjusted_norm, adjustment_log = apply_attribute_adjustments(avg_norm, is_reply, has_images, hashtag_count, tokens)
 
         # Step 5: Normalize to 0-1 scale using sigmoid
         # Load sigmoid parameters from config
@@ -353,10 +543,10 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         # Detailed analysis log
         print(f"[VECTOR_ANALYSIS] min={min_norm:.4f}, max={max_norm:.4f}, avg={avg_norm:.4f}, token_count={len(words_with_norms)}")
         print(f"[DENSITY_SCORE] {normalized_score:.3f} (avg_norm={avg_norm:.4f}→{adjusted_norm:.4f}, adjustments=[{adjustment_log}], comp_ratio={comp_ratio:.3f})")
-        return normalized_score
+        return normalized_score, badword_count
 
     except Exception as e:
         print(f"[DENSITY_ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
-        return 0.0
+        return 0.0, 0
