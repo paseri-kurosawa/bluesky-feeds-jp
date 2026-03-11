@@ -27,8 +27,8 @@
     },
     "density_threshold": {
       "description": "Dense Feed の判定基準（Sigmoid 正規化後）",
-      "threshold": 0.6,
-      "threshold_note": "score < 0.6 の場合は Raw Feed のみに格納。score >= 0.6 の場合は Raw Feed と Dense Feed の両方に格納。",
+      "threshold": 0.55,
+      "threshold_note": "score < 0.55 の場合は Raw Feed のみに格納。score >= 0.55 の場合は Raw Feed と Dense Feed の両方に格納。",
       "current_dense_rate": 0.318,
       "rate_note": "現在の Dense Feed 率（2026-03-09 実測）: 31.8%（22件中7件）"
     },
@@ -48,9 +48,9 @@
       },
       "images": {
         "enabled": true,
-        "adjustment": 1.0,
+        "adjustment": 1.5,
         "operation": "add",
-        "description": "画像付きは1.0点加点"
+        "description": "画像付きは1.5点加点"
       },
       "hashtags": {
         "enabled": true,
@@ -59,9 +59,9 @@
           {
             "min": 1,
             "max": 2,
-            "adjustment": 1.0,
+            "adjustment": 1.5,
             "operation": "add",
-            "description": "ハッシュタグ1-2個は1.0点加点"
+            "description": "ハッシュタグ1-2個は1.5点加点"
           },
           {
             "min": 3,
@@ -73,11 +73,46 @@
           {
             "min": 5,
             "max": null,
-            "adjustment": 1.0,
+            "adjustment": 1.5,
             "operation": "subtract",
-            "description": "ハッシュタグ5個以上は1.0点減点"
+            "description": "ハッシュタグ5個以上は1.5点減点"
           }
         ]
+      },
+      "badwords": {
+        "enabled": true,
+        "description": "バッドワード（不適切単語）に基づくスコア減衰",
+        "source": "S3 バケット内の badwords/dictionary.txt",
+        "file_format": {
+          "type": "text",
+          "encoding": "UTF-8",
+          "structure": "1行1単語（改行で区切られた単語リスト）",
+          "example": "殺す\\n暴力\\n差別\\n...",
+          "notes": "空行は自動的に無視される"
+        },
+        "matching": {
+          "base_form": true,
+          "description": "Janome で形態素解析した見出し語（基本形）とマッチング",
+          "case_sensitivity": "大文字小文字を区別しない（case-insensitive）",
+          "conjugation_handling": "活用形は自動的に見出し語に正規化される",
+          "example_1": "『殺す』『殺そう』『殺した』 → 全て『殺す』にマッチ",
+          "example_2": "『言う』『言った』『言い張る』 → 全て『言う』『言う』『言う』にマッチ"
+        },
+        "penalty": {
+          "value": 0.75,
+          "description": "バッドワード1つにつき adjusted_norm に 0.75 を乗算",
+          "formula": "adjusted_norm *= (penalty ^ badword_count)",
+          "single_badword": "adjusted_norm *= 0.75（25% 減衰）",
+          "two_badwords": "adjusted_norm *= 0.75^2 = 0.5625（43.75% 減衰）",
+          "three_badwords": "adjusted_norm *= 0.75^3 ≈ 0.4219（57.81% 減衰）",
+          "rationale": "単一バッドワードで半減は厳しすぎるため、段階的減衰を採用"
+        },
+        "application_stage": {
+          "step": 4,
+          "timing": "属性調整（Reply / Images / Hashtags）の完了後、シグモイド正規化前に適用",
+          "order": "Step4.1: Reply → Step4.2: Images → Step4.3: Hashtags → Step4.4: Badwords（ここ）",
+          "note": "複数のバッドワードが含まれる場合、ペナルティは乗算的に適用される（加算ではない）"
+        }
       }
     }
   }
