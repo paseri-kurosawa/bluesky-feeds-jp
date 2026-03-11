@@ -9,6 +9,7 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as path from 'path';
 
 export class BlueskyFeedJpStack extends cdk.Stack {
@@ -158,6 +159,34 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     // Grant Ingest permission to invoke Store
     storeLambda.grantInvoke(ingestLambda);
 
+    // === S3 Bucket for Badword Analysis ===
+    const badwordBucket = new s3.Bucket(this, 'BadwordAnalysisBucket', {
+      bucketName: `bluesky-feed-badword-analysis-${env.CDK_DEFAULT_ACCOUNT}`,
+      versioned: false,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+    });
+
+    // 6. Extract Lambda (Container Image - VPC)
+    const extractLambda = new lambda.DockerImageFunction(this, 'ExtractLambda', {
+      code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../lambda/extract')),
+      timeout: cdk.Duration.seconds(300),
+      memorySize: 2048,
+      logRetention: logs.RetentionDays.ONE_MONTH,
+      vpc,
+      securityGroups: [lambdaSecurityGroup],
+      environment: {
+        BSKY_HANDLE: env.BSKY_HANDLE || '',
+        BSKY_APP_PASSWORD: env.BSKY_APP_PASSWORD || '',
+        VALKEY_ENDPOINT: valkeyEndpoint,
+        S3_BUCKET: badwordBucket.bucketName,
+        S3_PREFIX: 'badword-analysis',
+      },
+    });
+
+    // Grant Extract Lambda permission to write to S3
+    badwordBucket.grantWrite(extractLambda);
+
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {
       apiName: 'BlueskyFeedApi',
@@ -191,8 +220,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     // === EventBridge Scheduling ===
     const ingestRule = new events.Rule(this, 'IngestScheduleRule', {
-      schedule: events.Schedule.rate(cdk.Duration.hours(6)),
-      description: 'Run feed ingest every 6 hours',
+      schedule: events.Schedule.rate(cdk.Duration.hours(3)),
+      description: 'Run feed ingest every 3 hours',
     });
 
     ingestRule.addTarget(new targets.LambdaFunction(ingestLambda));
@@ -206,6 +235,16 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ValkeyEndpoint', {
       value: valkeyEndpoint,
       description: 'Valkey Serverless endpoint',
+    });
+
+    new cdk.CfnOutput(this, 'ExtractLambdaFunctionName', {
+      value: extractLambda.functionName,
+      description: 'Extract Lambda function name for manual invocation',
+    });
+
+    new cdk.CfnOutput(this, 'BadwordAnalysisBucket', {
+      value: badwordBucket.bucketName,
+      description: 'S3 bucket for badword analysis output',
     });
   }
 }
