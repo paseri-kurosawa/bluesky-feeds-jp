@@ -167,9 +167,19 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
     });
 
-    // 6. Extract Lambda (Container Image - VPC)
-    const extractLambda = new lambda.DockerImageFunction(this, 'ExtractLambda', {
-      code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../lambda/extract')),
+    // 6. Extract Lambda (VPC)
+    const extractLambda = new lambda.Function(this, 'ExtractLambda', {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/extract'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          command: [
+            'bash', '-c',
+            'pip install -r requirements.txt -t /asset-output && cp -r . /asset-output/',
+          ],
+        },
+      }),
+      handler: 'handler.lambda_handler',
       timeout: cdk.Duration.seconds(300),
       memorySize: 2048,
       logRetention: logs.RetentionDays.ONE_MONTH,
