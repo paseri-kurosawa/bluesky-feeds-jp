@@ -21,3 +21,6 @@ __pycache__/
 deploy.log
 response.json
 cdk.context.json
+
+# Script work directory
+script/work/
