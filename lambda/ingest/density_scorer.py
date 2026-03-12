@@ -503,8 +503,11 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         comp_ratio = calculate_compression_ratio(text)
 
         # Noise detection: ratio too low (random) or too high (repetitive)
-        if comp_ratio < comp_min or comp_ratio > comp_max:
-            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, min={comp_min}, max={comp_max})")
+        if comp_ratio < comp_min:
+            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, BELOW_MIN: {comp_min})")
+            return 0.0, 0
+        if comp_ratio > comp_max:
+            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, EXCEEDS_MAX: {comp_max})")
             return 0.0, 0
 
         # Step 2: Extract word vectors
