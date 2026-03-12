@@ -146,7 +146,6 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       environment: {
         BSKY_HANDLE: env.BSKY_HANDLE || '',
         BSKY_APP_PASSWORD: env.BSKY_APP_PASSWORD || '',
-        DENSITY_THRESHOLD: env.DENSITY_THRESHOLD || '0.6',
         S3_BUCKET: badwordBucket.bucketName,
         STORE_FUNCTION_NAME: '', // Will be set after creation
       },
@@ -165,7 +164,6 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       securityGroups: [lambdaSecurityGroup],
       environment: {
         VALKEY_ENDPOINT: valkeyEndpoint,
-        DENSITY_THRESHOLD: env.DENSITY_THRESHOLD || '0.6',
       },
     });
 

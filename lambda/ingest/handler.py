@@ -26,7 +26,12 @@ BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
 BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
 STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
-DENSITY_THRESHOLD = float(os.environ.get("DENSITY_THRESHOLD", "0.6"))
+
+# Density threshold loaded from config.json
+def get_density_threshold():
+    """Get density threshold from config.json"""
+    config = get_config()
+    return float(config["scoring"]["density_threshold"]["threshold"])
 
 # Language detection model (lazy loaded)
 _model = None
@@ -204,7 +209,7 @@ def lambda_handler(event, context):
             })
 
             # Collect text and base forms if it will go to Dense feed
-            if density_score >= DENSITY_THRESHOLD:
+            if density_score >= get_density_threshold():
                 # Escape newlines for single-line format
                 text_escaped = text.replace("\n", "\\n").replace("\r", "\\r")
                 dense_texts.append(text_escaped)

@@ -3,8 +3,28 @@ import json
 import redis
 import time
 
+# Load configuration
+def load_config():
+    """Load configuration from config.json"""
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+_config = None
+
+def get_config():
+    """Get cached config"""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
+def get_density_threshold():
+    """Get density threshold from config.json"""
+    config = get_config()
+    return float(config["scoring"]["density_threshold"]["threshold"])
+
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
-DENSITY_THRESHOLD = float(os.environ.get("DENSITY_THRESHOLD", "2.0"))
 MAX_ITEMS = 5000
 
 r = redis.Redis(
@@ -62,7 +82,7 @@ def lambda_handler(event, context):
             raw_stored += 1
 
             # Store in dense feed if score >= threshold
-            if density_score >= DENSITY_THRESHOLD:
+            if density_score >= get_density_threshold():
                 r.zadd("feed:dense:jp:v1", {uri: ts})
                 dense_stored += 1
 
