@@ -22,13 +22,13 @@ FEEDS = [
     {
         "rkey": "japanese-raw-feed",
         "displayName": "JP Raw (PoC)",
-        "description": "[EXPERIMENTAL PoC] Japanese posts (lang:jp + fasttext verified). Latest first. DO NOT USE FOR PRODUCTION.",
+        "description": "[PoC]日本語の時系列順ポストです。正常動作しますが、調整中です。DO NOT USE FOR PRODUCTION.",
         "avatar": None,
     },
     {
         "rkey": "japanese-dense-feed",
         "displayName": "JP Dense (PoC)",
-        "description": "[EXPERIMENTAL PoC] High-density Japanese posts (Janome analysis + score >= 2.0). Latest first. DO NOT USE FOR PRODUCTION.",
+        "description": "[PoC]日本語の時系列順\"高密度\"ポストです。正常動作しますが、調整中です。DO NOT USE FOR PRODUCTION.",
         "avatar": None,
     },
 ]
