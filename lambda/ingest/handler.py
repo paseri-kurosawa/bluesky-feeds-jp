@@ -232,8 +232,12 @@ def lambda_handler(event, context):
 
         # Badword statistics
         print(f"\n=== Badword Analysis ===")
-        print(f"Posts with badwords: {badword_stats['total_posts_with_badwords']}")
+        badword_hit_rate = (badword_stats['total_posts_with_badwords'] / len(items) * 100) if items else 0
+        print(f"Posts with badwords: {badword_stats['total_posts_with_badwords']} / {len(items)} ({badword_hit_rate:.1f}%)")
         print(f"Total badword matches: {badword_stats['total_badword_matches']}")
+        if badword_stats['total_posts_with_badwords'] > 0:
+            avg_matches_per_hit = badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
+            print(f"Average matches per badword-hit post: {avg_matches_per_hit:.2f}")
         if badword_stats['badword_distribution']:
             print(f"Distribution by matches per post:")
             for match_count in sorted(badword_stats['badword_distribution'].keys(), key=int):
