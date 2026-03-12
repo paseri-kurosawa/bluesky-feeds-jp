@@ -35,7 +35,7 @@
     "compression_ratio": {
       "description": "ノイズ検出のための zlib 圧縮率チェック",
       "min": 0.7,
-      "max": 2.0,
+      "max": 0.95,
       "note": "ratio < min または ratio > max の場合は score = 0.0（ノイズと判定）"
     },
     "attributes": {
