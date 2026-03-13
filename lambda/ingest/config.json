@@ -32,11 +32,10 @@
       "current_dense_rate": 0.352,
       "rate_note": "現在の Dense Feed 率（2026-03-12 実測）: 35.2%（91件中32件）"
     },
-    "compression_ratio": {
-      "description": "ノイズ検出のための zlib 圧縮率チェック",
-      "min": 0.7,
-      "max": 0.95,
-      "note": "ratio < min または ratio > max の場合は score = 0.0（ノイズと判定）"
+    "token_dispersion": {
+      "description": "トークン分散度による繰り返し検出（高いほど自然な言語）",
+      "threshold": 0.55,
+      "note": "dispersion < threshold の場合は score = 0.0（繰り返しノイズと判定）。dispersion = unique_tokens / total_tokens"
     },
     "attributes": {
       "description": "ポスト属性に基づく調整（正規化前の avg_norm に対して適用）",

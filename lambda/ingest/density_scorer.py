@@ -2,12 +2,11 @@
 Density-based content quality scoring module using .ftz model.
 
 Simple, lightweight scoring:
-1. zlib compression ratio check (noise detection)
+1. Token dispersion check (repetition detection)
 2. Word vector norm extraction from .ftz model
 3. Attribute-based adjustments (reply, images, hashtags)
 """
 
-import zlib
 import os
 import re
 import math
@@ -66,25 +65,7 @@ def load_config() -> Dict[str, Any]:
             print("[CONFIG_LOAD] Config loaded successfully")
         except Exception as e:
             print(f"[CONFIG_ERROR] Failed to load config: {e}")
-            # Fallback to hardcoded defaults
-            _config = {
-                "scoring": {
-                    "sigmoid": {"midpoint": 8.0, "steepness": 0.5},
-                    "compression_ratio": {"min": 0.2, "max": 0.95},
-                    "attributes": {
-                        "reply": {"enabled": True, "adjustment": 0.5, "operation": "multiply"},
-                        "images": {"enabled": True, "adjustment": 1.0, "operation": "add"},
-                        "hashtags": {
-                            "enabled": True,
-                            "rules": [
-                                {"min": 1, "max": 2, "adjustment": 1.0, "operation": "add"},
-                                {"min": 3, "max": 4, "adjustment": 0.0, "operation": "add"},
-                                {"min": 5, "max": None, "adjustment": 1.0, "operation": "subtract"}
-                            ]
-                        }
-                    }
-                }
-            }
+            raise  # No fallback - config must be present
     return _config
 
 def load_badwords_config() -> Dict[str, Any]:
@@ -153,24 +134,32 @@ def load_badwords_config() -> Dict[str, Any]:
 
     return _badwords_config
 
-def calculate_compression_ratio(text: str) -> float:
+def calculate_token_dispersion(text: str) -> float:
     """
-    Calculate zlib compression ratio.
+    Calculate token dispersion score (0-1).
+
+    Higher values indicate more natural language with diverse vocabulary.
+    Lower values indicate repetitive, unnatural text.
+
+    Formula: unique_tokens / total_tokens
+    - 1.0 = all unique (most natural)
+    - 0.0 = no tokens or complete repetition (least natural)
 
     Args:
         text: Input text
 
     Returns:
-        Compression ratio (compressed_size / original_size)
+        Dispersion score (0-1)
     """
-    if not text:
-        return 1.0
+    tokens = tokenize_japanese(text)
+    if not tokens:
+        return 0.0
 
-    original_bytes = text.encode('utf-8')
-    compressed_bytes = zlib.compress(original_bytes, level=9)
+    unique_count = len(set(tokens))
+    total_count = len(tokens)
+    dispersion = unique_count / total_count
 
-    ratio = len(compressed_bytes) / len(original_bytes)
-    return ratio
+    return dispersion
 
 def tokenize_japanese(text: str) -> List[str]:
     """
@@ -483,7 +472,8 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
     Calculate density score for a text with attribute adjustments.
 
     Algorithm:
-    - Step 1: Check zlib compression ratio (noise detection)
+    - Step 0: Tokenize text once (cached for reuse)
+    - Step 1: Check token dispersion (repetition detection)
     - Step 2: Extract word vectors using .ftz model
     - Step 3: Calculate average vector norm
     - Step 4: Apply attribute adjustments (before sigmoid normalization)
@@ -502,20 +492,24 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         - matched_words: List of matched badwords
     """
     try:
-        # Step 1: Compression ratio check
+        # Step 0: Tokenize text once and cache for reuse
+        tokens = tokenize_japanese(text)
+        base_forms = extract_base_forms(text)
+
+        # Step 1: Token dispersion check (repetition detection)
         config = load_config()
-        comp_conf = config["scoring"]["compression_ratio"]
-        comp_min = comp_conf["min"]
-        comp_max = comp_conf["max"]
+        disp_conf = config["scoring"]["token_dispersion"]
+        disp_threshold = disp_conf["threshold"]
 
-        comp_ratio = calculate_compression_ratio(text)
-
-        # Noise detection: ratio too low (random) or too high (repetitive)
-        if comp_ratio < comp_min:
-            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, BELOW_MIN: {comp_min})")
+        if not tokens:
+            # No tokens extracted = noise
+            print(f"[DENSITY] No tokens extracted (likely noise)")
             return 0.0, 0, []
-        if comp_ratio > comp_max:
-            print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, EXCEEDS_MAX: {comp_max})")
+
+        dispersion = len(set(tokens)) / len(tokens)
+
+        if dispersion < disp_threshold:
+            print(f"[DENSITY] Failed token dispersion check (dispersion={dispersion:.3f}, BELOW_THRESHOLD: {disp_threshold})")
             return 0.0, 0, []
 
         # Step 2: Extract word vectors
@@ -531,18 +525,13 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         min_norm = min(norms)
         max_norm = max(norms)
 
-        # Extract tokens for badword checking
-        tokens = tokenize_japanese(text)
+        # Count badwords for statistics (using cached base_forms)
+        badword_count, matched_words = count_badwords_in_tokens(base_forms)
 
-        # Count badwords for statistics (returns tuple of count and matched words)
-        badword_count, matched_words = count_badwords_in_tokens(tokens)
-
-        # Step 4: Apply attribute adjustments (including badword penalty)
+        # Step 4: Apply attribute adjustments (including badword penalty, using cached tokens)
         adjusted_norm, adjustment_log = apply_attribute_adjustments(avg_norm, is_reply, has_images, hashtag_count, tokens)
 
         # Step 5: Normalize to 0-1 scale using sigmoid
-        # Load sigmoid parameters from config
-        config = load_config()
         sigmoid_conf = config["scoring"]["sigmoid"]
         sigmoid_midpoint = sigmoid_conf["midpoint"]
         sigmoid_steepness = sigmoid_conf["steepness"]
@@ -553,7 +542,7 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
 
         # Detailed analysis log
         print(f"[VECTOR_ANALYSIS] min={min_norm:.4f}, max={max_norm:.4f}, avg={avg_norm:.4f}, token_count={len(words_with_norms)}")
-        print(f"[DENSITY_SCORE] {normalized_score:.3f} (avg_norm={avg_norm:.4f}→{adjusted_norm:.4f}, adjustments=[{adjustment_log}], comp_ratio={comp_ratio:.3f})")
+        print(f"[DENSITY_SCORE] {normalized_score:.3f} (avg_norm={avg_norm:.4f}→{adjusted_norm:.4f}, adjustments=[{adjustment_log}], dispersion={dispersion:.3f})")
         return normalized_score, badword_count, matched_words
 
     except Exception as e:
