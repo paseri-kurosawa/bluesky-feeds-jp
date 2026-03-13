@@ -193,6 +193,7 @@ def search_posts_with_retry(client, search_config, max_retries=3):
         Search result or None if all retries failed
     """
     from atproto_client.exceptions import InvokeTimeoutError
+    import httpx
 
     search_query = search_config["query"]
     search_limit = search_config["limit"]
@@ -208,7 +209,7 @@ def search_posts_with_retry(client, search_config, max_retries=3):
             })
             print(f"Search successful on attempt {attempt + 1}")
             return res
-        except InvokeTimeoutError as e:
+        except (InvokeTimeoutError, httpx.TimeoutException) as e:
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
                 print(f"[RETRY] Search timed out. Retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
