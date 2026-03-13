@@ -171,12 +171,50 @@ def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_
         print(f"[STATISTICS ERROR] Failed to save statistics: {str(e)}")
         return None
 
+def search_posts_with_retry(client, search_config, max_retries=3):
+    """
+    Search posts with exponential backoff retry logic.
+
+    Args:
+        client: atproto Client instance
+        search_config: Search configuration dict
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        Search result or None if all retries failed
+    """
+    from atproto_client.exceptions import InvokeTimeoutError
+
+    search_query = search_config["query"]
+    search_limit = search_config["limit"]
+    search_sort = search_config["sort"]
+
+    for attempt in range(max_retries):
+        try:
+            print(f"Searching for posts: {search_query} (attempt {attempt + 1}/{max_retries})")
+            res = client.app.bsky.feed.search_posts({
+                "q": search_query,
+                "sort": search_sort,
+                "limit": search_limit,
+            })
+            print(f"Search successful on attempt {attempt + 1}")
+            return res
+        except InvokeTimeoutError as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
+                print(f"[RETRY] Search timed out. Retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                print(f"[ERROR] Search failed after {max_retries} attempts")
+                raise
+
+
 def lambda_handler(event, context):
     """
     Ingest Lambda: Fetches latest Japanese posts from Bluesky.
 
     Process:
-    1. Search for posts with lang:ja
+    1. Search for posts with lang:ja (with retry on timeout)
     2. Filter out moderated posts (has_any_labels)
     3. Verify language with fastText
     4. Calculate density score
@@ -190,19 +228,10 @@ def lambda_handler(event, context):
         client = Client()
         client.login(BSKY_HANDLE, BSKY_APP_PASSWORD)
 
-        # Search posts
+        # Search posts with retry logic
         config = get_config()
         search_config = config["search"]
-        search_query = search_config["query"]
-        search_limit = search_config["limit"]
-        search_sort = search_config["sort"]
-
-        print(f"Searching for posts: {search_query}")
-        res = client.app.bsky.feed.search_posts({
-            "q": search_query,
-            "sort": search_sort,
-            "limit": search_limit,
-        })
+        res = search_posts_with_retry(client, search_config, max_retries=3)
 
         # Process results
         items = []
