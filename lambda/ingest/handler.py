@@ -289,13 +289,14 @@ def lambda_handler(event, context):
             # Extract post attributes
             is_reply = bool(getattr(record, "reply", None)) if record else False
 
-            # Check for images in embed
+            # Check for images and videos in embed
             has_images = False
             embed = getattr(record, "embed", None) if record else None
             if embed:
-                # Check for images field (varies by embed type)
+                # Check for images (including GIFs) or videos
                 images = getattr(embed, "images", None)
-                has_images = bool(images)
+                video = getattr(embed, "video", None)
+                has_images = bool(images or video)
 
             # Extract hashtag count from facets
             hashtag_count = extract_hashtag_count(record)
