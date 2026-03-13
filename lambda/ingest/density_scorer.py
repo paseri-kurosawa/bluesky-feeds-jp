@@ -463,7 +463,7 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
     # - 複数マッチ時: 乗算的に適用 adjusted_norm *= (0.75 ^ count)
     # - 例: 2つのバッドワード → adjusted_norm *= 0.75^2 = 0.5625（43.75% 減衰）
     if tokens:
-        badword_count = count_badwords_in_tokens(tokens)
+        badword_count, matched_words = count_badwords_in_tokens(tokens)
         if badword_count > 0:
             badwords_config = load_badwords_config()
             penalty = badwords_config.get("penalty", 0.75)
@@ -471,8 +471,9 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
             # 複数のバッドワードが含まれる場合、ペナルティは指数的に適用される
             multiplier = penalty ** badword_count
             adjusted_norm *= multiplier
+            matched_words_str = "、".join(matched_words)
             adjustments.append(f"badwords({badword_count}):×{multiplier:.4f}")
-            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s), penalty multiplier={multiplier:.4f} (0.75^{badword_count})")
+            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s): 【{matched_words_str}】, penalty multiplier={multiplier:.4f} (0.75^{badword_count})")
 
     adjustment_log = ", ".join(adjustments) if adjustments else "none"
     return adjusted_norm, adjustment_log
