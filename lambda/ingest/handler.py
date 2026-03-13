@@ -145,7 +145,16 @@ def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_
 | Hit Rate | {badword_hit_rate:.1f}% |
 | Total Matches | {badword_stats['total_badword_matches']} |
 | Avg Matches per Hit | {avg_matches:.2f} |
+"""
 
+        # Add matched words breakdown if any
+        if badword_stats['matched_words']:
+            markdown_content += "\n### Matched Badwords\n"
+            for word in sorted(badword_stats['matched_words'].keys()):
+                count = badword_stats['matched_words'][word]
+                markdown_content += f"- **{word}**: {count} match(es)\n"
+
+        markdown_content += f"""
 ## Dense Feed Statistics
 | Metric | Value |
 |--------|-------|
@@ -246,6 +255,7 @@ def lambda_handler(event, context):
             "total_posts_with_badwords": 0,
             "total_badword_matches": 0,
             "badword_distribution": {},  # Count by number of matches per post
+            "matched_words": {},  # Count by matched word name
         }
 
         posts = getattr(res, "posts", []) or []
@@ -290,7 +300,7 @@ def lambda_handler(event, context):
             hashtag_count = extract_hashtag_count(record)
 
             # Calculate density score with attributes
-            density_score, badword_count = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
+            density_score, badword_count, matched_words = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
 
             # Record badword statistics
             if badword_count > 0:
@@ -299,6 +309,9 @@ def lambda_handler(event, context):
                 # Track distribution of matches per post
                 key = str(badword_count)
                 badword_stats["badword_distribution"][key] = badword_stats["badword_distribution"].get(key, 0) + 1
+                # Track which words were matched
+                for word in matched_words:
+                    badword_stats["matched_words"][word] = badword_stats["matched_words"].get(word, 0) + 1
 
             # Convert indexed_at to timestamp
             ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))

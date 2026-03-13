@@ -349,9 +349,9 @@ def extract_word_vector_norms(text: str) -> List[Tuple[str, float]]:
     return words_with_norms
 
 
-def count_badwords_in_tokens(tokens: List[str]) -> int:
+def count_badwords_in_tokens(tokens: List[str]) -> Tuple[int, List[str]]:
     """
-    Count how many badwords appear in the token list.
+    Count how many badwords appear in the token list, and return matched words.
 
     【重要な仕様】
     - tokens: Janome で形態素解析された見出し語（基本形）のリスト
@@ -359,28 +359,34 @@ def count_badwords_in_tokens(tokens: List[str]) -> int:
     - 辞書: S3 から読み込まれた badwords/dictionary.txt（1行1単語、見出し語ベース）
 
     【動作】
-    各トークン（見出し語）が辞書に含まれるかチェック → マッチ数を返す
+    各トークン（見出し語）が辞書に含まれるかチェック → マッチ数と該当ワード一覧を返す
 
     Args:
         tokens: List of base forms (見出し語) from Janome morphological analysis
 
     Returns:
-        Number of badword matches found in the token list
+        Tuple of (badword_count, matched_words_list)
+        - badword_count: Number of badword matches found
+        - matched_words_list: List of matched badwords (with original capitalization from dictionary)
     """
     badwords_config = load_badwords_config()
     badwords = badwords_config.get("badwords", [])
 
     if not badwords:
-        return 0
+        return 0, []
 
-    # Create lowercase set for case-insensitive matching
-    # 見出し語と辞書を case-insensitive で比較
-    badwords_lower = {word.lower() for word in badwords}
+    # Create lowercase mapping: lowercase -> original
+    badwords_lower_map = {word.lower(): word for word in badwords}
     tokens_lower = [token.lower() for token in tokens]
 
-    # Count matches (辞書に含まれるトークン数)
-    badword_count = sum(1 for token in tokens_lower if token in badwords_lower)
-    return badword_count
+    # Find matches with original capitalization
+    matched_words = []
+    for token in tokens_lower:
+        if token in badwords_lower_map:
+            matched_words.append(badwords_lower_map[token])
+
+    badword_count = len(matched_words)
+    return badword_count, matched_words
 
 def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: bool, hashtag_count: int, tokens: List[str] = None) -> Tuple[float, str]:
     """
@@ -471,7 +477,7 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
     adjustment_log = ", ".join(adjustments) if adjustments else "none"
     return adjusted_norm, adjustment_log
 
-def calculate_density_score(text: str, is_reply: bool = False, has_images: bool = False, hashtag_count: int = 0) -> Tuple[float, int]:
+def calculate_density_score(text: str, is_reply: bool = False, has_images: bool = False, hashtag_count: int = 0) -> Tuple[float, int, List[str]]:
     """
     Calculate density score for a text with attribute adjustments.
 
@@ -489,9 +495,10 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         hashtag_count: Number of hashtags from record.facets (default: 0)
 
     Returns:
-        Tuple of (density_score, badword_count):
+        Tuple of (density_score, badword_count, matched_words):
         - density_score: Density score (0-1 scale), or 0 if text fails checks
         - badword_count: Number of badwords matched in the text
+        - matched_words: List of matched badwords
     """
     try:
         # Step 1: Compression ratio check
@@ -505,17 +512,17 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         # Noise detection: ratio too low (random) or too high (repetitive)
         if comp_ratio < comp_min:
             print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, BELOW_MIN: {comp_min})")
-            return 0.0, 0
+            return 0.0, 0, []
         if comp_ratio > comp_max:
             print(f"[DENSITY] Failed compression check (ratio={comp_ratio:.3f}, EXCEEDS_MAX: {comp_max})")
-            return 0.0, 0
+            return 0.0, 0, []
 
         # Step 2: Extract word vectors
         words_with_norms = extract_word_vector_norms(text)
 
         if not words_with_norms:
             print("[DENSITY] No word vectors found")
-            return 0.0, 0
+            return 0.0, 0, []
 
         # Step 3: Calculate average norm
         norms = [norm for _, norm in words_with_norms]
@@ -526,8 +533,8 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         # Extract tokens for badword checking
         tokens = tokenize_japanese(text)
 
-        # Count badwords for statistics
-        badword_count = count_badwords_in_tokens(tokens)
+        # Count badwords for statistics (returns tuple of count and matched words)
+        badword_count, matched_words = count_badwords_in_tokens(tokens)
 
         # Step 4: Apply attribute adjustments (including badword penalty)
         adjusted_norm, adjustment_log = apply_attribute_adjustments(avg_norm, is_reply, has_images, hashtag_count, tokens)
@@ -546,10 +553,10 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         # Detailed analysis log
         print(f"[VECTOR_ANALYSIS] min={min_norm:.4f}, max={max_norm:.4f}, avg={avg_norm:.4f}, token_count={len(words_with_norms)}")
         print(f"[DENSITY_SCORE] {normalized_score:.3f} (avg_norm={avg_norm:.4f}→{adjusted_norm:.4f}, adjustments=[{adjustment_log}], comp_ratio={comp_ratio:.3f})")
-        return normalized_score, badword_count
+        return normalized_score, badword_count, matched_words
 
     except Exception as e:
         print(f"[DENSITY_ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
-        return 0.0, 0
+        return 0.0, 0, []
