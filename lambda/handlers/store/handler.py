@@ -87,14 +87,15 @@ def lambda_handler(event, context):
             if ts < 0:
                 continue
 
-            # Calculate visible_ts: distribute post across 20-minute window
-            # First post: visible_ts = ts
-            # Last post: visible_ts = ts + 1200 seconds
+            # Calculate visible_ts: distribute posts across 20-minute window from now
+            # This ensures the latest batch is gradually displayed starting from store time
+            # First post: visible_ts = now
+            # Last post: visible_ts = now + 1200 seconds
             if items_count > 1:
                 offset = (idx / (items_count - 1)) * batch_spread_seconds
             else:
                 offset = 0
-            visible_ts = ts + offset
+            visible_ts = now + offset
 
             # Create member as JSON with all metadata
             member = json.dumps({
