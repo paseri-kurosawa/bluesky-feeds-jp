@@ -181,6 +181,9 @@ def lambda_handler(event, context):
         }
 
     except Exception as e:
+        import traceback
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"[ERROR] {error_msg}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": str(e)})
