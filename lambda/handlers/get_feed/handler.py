@@ -8,6 +8,22 @@ VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
 
+# Load pseudo-stream configuration
+def load_config():
+    """Load configuration from config.json"""
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+_config = None
+
+def get_config():
+    """Get cached config"""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
 r = redis.Redis(
     host=VALKEY_ENDPOINT,
     port=6379,
@@ -85,7 +101,7 @@ def lambda_handler(event, context):
         cursor = body.get("cursor") or params.get("cursor")
 
         # Parse cursor
-        max_score = "+inf"
+        max_score = float('inf')
         offset = 0
         if cursor:
             try:
@@ -100,19 +116,16 @@ def lambda_handler(event, context):
                     "body": json.dumps({"error": f"Invalid cursor format: {str(e)}"})
                 }
 
-        # Pseudo-stream: only return posts from 20 minutes ago or earlier
-        # This creates a time buffer for smooth streaming appearance
-        # (matches 20-minute ingest interval)
+        # Pseudo-stream: only return posts from (spread_duration) ago or earlier
+        # This creates a smooth time window for gradual appearance of new batches
         current_time = time.time()
-        cutoff_time = current_time - 1200  # 20 minutes = 1200 seconds
+        config = get_config()
+        pseudo_stream_config = config.get("pseudo_stream", {})
+        spread_duration = pseudo_stream_config.get("spread_duration_seconds", 1200)
+        cutoff_time = current_time - spread_duration
 
-        # Fetch from ZSET (sorted by score descending = latest first)
-        # But only up to cutoff_time to enable pseudo-streaming
-        # Apply cutoff: if max_score is "+inf" or exceeds cutoff, use cutoff
-        if max_score == float('inf'):
-            max_score = cutoff_time
-        else:
-            max_score = min(max_score, cutoff_time)
+        # Never return posts newer than cutoff_time
+        max_score = min(max_score, cutoff_time)
 
         raw = r.zrevrangebyscore(
             feed_key,
@@ -124,14 +137,29 @@ def lambda_handler(event, context):
         )
 
         # Build feed items
+        # Always return requested limit regardless of batch state
         items = []
-        for uri, score in raw[:limit]:
-            items.append({"post": uri})
+        last_member = None
+        last_score = None
+
+        for idx, (member_json, score) in enumerate(raw[:limit]):
+            try:
+                # Member is JSON with uri, ts, visible_ts, density_score
+                member = json.loads(member_json)
+                uri = member.get("uri")
+                if uri:
+                    items.append({"post": uri})
+                    last_member = member_json
+                    last_score = score
+            except json.JSONDecodeError:
+                # Fallback: treat as plain URI string (backward compatibility)
+                items.append({"post": member_json})
+                last_member = member_json
+                last_score = score
 
         # Build next cursor if more items exist
         next_cursor = None
-        if len(raw) > limit:
-            last_uri, last_score = raw[limit - 1]
+        if len(raw) > limit and last_score is not None:
             # Cursor format: score:offset (base64 encoded for Bluesky compatibility)
             cursor_str = f"{last_score}:{offset + limit}"
             next_cursor = base64.b64encode(cursor_str.encode()).decode()

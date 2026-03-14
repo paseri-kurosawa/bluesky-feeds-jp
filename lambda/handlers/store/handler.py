@@ -52,8 +52,14 @@ def lambda_handler(event, context):
     """
     try:
         items = event.get("items", [])
+        print(f"[DEBUG] Received items count: {len(items)}")
+
+        if items and len(items) > 0:
+            first_item = items[0]
+            print(f"[DEBUG] First item: uri={first_item.get('uri')}, ts={first_item.get('ts')}, density={first_item.get('density_score')}")
 
         if not items:
+            print("[DEBUG] No items received")
             return {"stored_raw": 0, "stored_dense": 0, "note": "no items"}
 
         # Test Valkey connection
@@ -63,7 +69,11 @@ def lambda_handler(event, context):
         raw_stored = 0
         dense_stored = 0
 
-        for item in items:
+        # Calculate time distribution for batch
+        batch_spread_seconds = MAX_ITEMS_TIME_WINDOW = 1200  # 20 minutes
+        items_count = len(items)
+
+        for idx, item in enumerate(items):
             uri = item.get("uri")
             ts = item.get("ts")
             density_score = item.get("density_score", 0)
@@ -77,14 +87,41 @@ def lambda_handler(event, context):
             if ts < 0:
                 continue
 
+            # Calculate visible_ts: distribute post across 20-minute window
+            # First post: visible_ts = ts
+            # Last post: visible_ts = ts + 1200 seconds
+            if items_count > 1:
+                offset = (idx / (items_count - 1)) * batch_spread_seconds
+            else:
+                offset = 0
+            visible_ts = ts + offset
+
+            # Create member as JSON with all metadata
+            member = json.dumps({
+                "uri": uri,
+                "ts": ts,
+                "visible_ts": visible_ts,
+                "density_score": density_score
+            }, ensure_ascii=False)
+
             # Always store in raw feed
-            r.zadd("feed:raw:jp:v1", {uri: ts})
-            raw_stored += 1
+            try:
+                result_raw = r.zadd("feed:raw:jp:v1", {member: visible_ts})
+                raw_stored += 1
+                if result_raw == 0:
+                    print(f"[WARN] Raw zadd returned 0 (duplicate?): {uri}")
+            except Exception as e:
+                print(f"[ERROR] Raw zadd failed for {uri}: {e}")
 
             # Store in dense feed if score >= threshold
             if density_score >= get_density_threshold():
-                r.zadd("feed:dense:jp:v1", {uri: ts})
-                dense_stored += 1
+                try:
+                    result_dense = r.zadd("feed:dense:jp:v1", {member: visible_ts})
+                    dense_stored += 1
+                    if result_dense == 0:
+                        print(f"[WARN] Dense zadd returned 0 (duplicate?): {uri}")
+                except Exception as e:
+                    print(f"[ERROR] Dense zadd failed for {uri}: {e}")
 
         # Trim both feeds to MAX_ITEMS (keep latest)
         r.zremrangebyrank("feed:raw:jp:v1", 0, -MAX_ITEMS - 1)

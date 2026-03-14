@@ -377,6 +377,37 @@ def count_badwords_in_tokens(tokens: List[str]) -> Tuple[int, List[str]]:
     badword_count = len(matched_words)
     return badword_count, matched_words
 
+def is_text_only_and_short(text: str, has_images: bool, char_limit: int = 15) -> Tuple[bool, str]:
+    """
+    Check if post is text-only and character count is within limit.
+
+    Dense フィード判定条件:
+    - 文字のみ（画像や動画を要素に含まない）
+    - 15文字以内
+    → TRUE の場合、dense フィードに含めない
+
+    Args:
+        text: Post text content
+        has_images: Whether post has images/videos
+        char_limit: Character limit (default: 15)
+
+    Returns:
+        Tuple of (should_skip, reason)
+        - should_skip: True if text-only and <= char_limit
+        - reason: Log message explaining the result
+    """
+    if has_images:
+        # Has media, not text-only
+        return False, "has_media"
+
+    # Count actual characters (excluding whitespace)
+    char_count = len(text.strip())
+
+    if char_count <= char_limit:
+        return True, f"text_only_short(chars={char_count})"
+
+    return False, "pass"
+
 def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: bool, hashtag_count: int, tokens: List[str] = None) -> Tuple[float, str]:
     """
     Apply attribute-based adjustments to avg_norm before sigmoid normalization.
