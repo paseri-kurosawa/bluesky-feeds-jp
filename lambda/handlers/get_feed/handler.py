@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import time
 import redis
 
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
@@ -99,7 +100,20 @@ def lambda_handler(event, context):
                     "body": json.dumps({"error": f"Invalid cursor format: {str(e)}"})
                 }
 
+        # Pseudo-stream: only return posts from 20 minutes ago or earlier
+        # This creates a time buffer for smooth streaming appearance
+        # (matches 20-minute ingest interval)
+        current_time = time.time()
+        cutoff_time = current_time - 1200  # 20 minutes = 1200 seconds
+
         # Fetch from ZSET (sorted by score descending = latest first)
+        # But only up to cutoff_time to enable pseudo-streaming
+        # Apply cutoff: if max_score is "+inf" or exceeds cutoff, use cutoff
+        if max_score == float('inf'):
+            max_score = cutoff_time
+        else:
+            max_score = min(max_score, cutoff_time)
+
         raw = r.zrevrangebyscore(
             feed_key,
             max_score,
