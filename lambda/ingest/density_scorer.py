@@ -85,11 +85,11 @@ def load_badwords_config() -> Dict[str, Any]:
     - 例: 『言う』『言った』『言い張る』 → 対応する見出し語でマッチ
 
     【ペナルティ】
-    - 固定値: 0.75（25% 減衰）
-    - 複数バッドワード時: adjusted_norm *= (0.75 ^ count)
-    - 1つ: 0.75倍（25% 減衰）
-    - 2つ: 0.5625倍（43.75% 減衰）
-    - 3つ: 0.4219倍（57.81% 減衰）
+    - 指数関数: adjusted_norm *= exp(-0.5 * count)
+    - 1つ: 0.6065倍（39.35% 減衰）
+    - 2つ: 0.3679倍（63.21% 減衰）
+    - 3つ: 0.2231倍（77.69% 減衰）
+    - 多いほど確実に減衰
 
     【適用段階】
     - Step 4.4: Hashtags 調整の直後、シグモイド正規化前に適用
@@ -100,7 +100,7 @@ def load_badwords_config() -> Dict[str, Any]:
 
         if not s3_bucket:
             print("[BADWORDS_LOAD] S3_BUCKET not set, badwords disabled")
-            _badwords_config = {"badwords": [], "penalty": 0.75}
+            _badwords_config = {"badwords": []}
             return _badwords_config
 
         try:
@@ -120,8 +120,7 @@ def load_badwords_config() -> Dict[str, Any]:
             badwords = [word.strip() for word in text_content.split("\n") if word.strip()]
 
             _badwords_config = {
-                "badwords": badwords,
-                "penalty": 0.75  # Fixed penalty: 25% attenuation per badword
+                "badwords": badwords
             }
 
             badword_count = len(badwords)
@@ -130,7 +129,7 @@ def load_badwords_config() -> Dict[str, Any]:
         except Exception as e:
             print(f"[BADWORDS_LOAD] Failed to load badwords: {e}")
             # Fallback: empty badwords (badword filtering disabled)
-            _badwords_config = {"badwords": [], "penalty": 0.75}
+            _badwords_config = {"badwords": []}
 
     return _badwords_config
 
@@ -479,21 +478,19 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
     # Step 4.4: Badword adjustment（Hashtags の直後）
     # 【仕様】
     # - 見出し語ベースのバッドワードマッチング（活用形は自動正規化）
-    # - ペナルティ: 0.75（25% 減衰）
-    # - 複数マッチ時: 乗算的に適用 adjusted_norm *= (0.75 ^ count)
-    # - 例: 2つのバッドワード → adjusted_norm *= 0.75^2 = 0.5625（43.75% 減衰）
+    # - ペナルティ: 指数関数 exp(-0.5 * count)
+    # - 複数マッチ時: adjusted_norm *= exp(-0.5 * count)
+    # - 例: 2つのバッドワード → adjusted_norm *= exp(-1.0) = 0.3679（63.21% 減衰）
     if tokens:
         badword_count, matched_words = count_badwords_in_tokens(tokens)
         if badword_count > 0:
-            badwords_config = load_badwords_config()
-            penalty = badwords_config.get("penalty", 0.75)
-            # Apply penalty multiplicatively: adjusted_norm *= penalty^badword_count
-            # 複数のバッドワードが含まれる場合、ペナルティは指数的に適用される
-            multiplier = penalty ** badword_count
+            # Apply penalty using exponential function: adjusted_norm *= exp(-0.5 * count)
+            # より多くのバッドワードがある場合、より急激に減衰
+            multiplier = math.exp(-0.5 * badword_count)
             adjusted_norm *= multiplier
             matched_words_str = "、".join(matched_words)
             adjustments.append(f"badwords({badword_count}):×{multiplier:.4f}")
-            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s): 【{matched_words_str}】, penalty multiplier={multiplier:.4f} (0.75^{badword_count})")
+            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s): 【{matched_words_str}】, penalty multiplier={multiplier:.4f} (exp(-0.5×{badword_count}))")
 
     adjustment_log = ", ".join(adjustments) if adjustments else "none"
     return adjusted_norm, adjustment_log
