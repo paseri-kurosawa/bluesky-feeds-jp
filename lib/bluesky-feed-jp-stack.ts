@@ -192,6 +192,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     // Grant Ingest Lambda permission to read and write to S3
     badwordBucket.grantReadWrite(ingestLambda);
     statisticsBucket.grantWrite(ingestLambda);
+    statisticsBucket.grantRead(ingestLambda); // For listing files to update index
 
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {

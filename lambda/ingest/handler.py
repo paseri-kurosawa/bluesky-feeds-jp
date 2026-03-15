@@ -2,8 +2,11 @@ import os
 import json
 import time
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms
+
+# Japan Standard Time (UTC+9)
+JST = timezone(timedelta(hours=9))
 
 # Load configuration
 def load_config():
@@ -118,8 +121,9 @@ def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_
 
     try:
         s3_client = boto3.client("s3")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        iso_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_jst = datetime.now(JST)
+        timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
+        iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
         # Calculate badword hit rate
         badword_hit_rate = (badword_stats['total_posts_with_badwords'] / len(items) * 100) if items else 0
@@ -206,8 +210,9 @@ def save_statistics_json(statistics_bucket, skipped_by_reason, items, badword_st
 
     try:
         s3_client = boto3.client("s3")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        iso_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_jst = datetime.now(JST)
+        timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
+        iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
         # Calculate rates
         total_fetched = len(posts)
@@ -276,6 +281,53 @@ def save_statistics_json(statistics_bucket, skipped_by_reason, items, badword_st
     except Exception as e:
         print(f"[STATISTICS ERROR] Failed to save JSON statistics: {str(e)}")
         return None
+
+def update_statistics_index(statistics_bucket):
+    """
+    Update stats-index.json in S3 with latest stat files.
+    Errors are logged but don't interrupt the flow (non-critical operation).
+
+    Args:
+        statistics_bucket: S3 bucket name for statistics
+    """
+    if not statistics_bucket:
+        return
+
+    try:
+        s3_client = boto3.client("s3")
+
+        # List latest stat files
+        response = s3_client.list_objects_v2(
+            Bucket=statistics_bucket,
+            Prefix="stats/",
+            MaxKeys=1000
+        )
+
+        if 'Contents' not in response:
+            print("[INDEX] No stats files found")
+            return
+
+        # Filter for .md and .json files, sort by date
+        files = sorted([obj['Key'] for obj in response['Contents'] if obj['Key'].endswith(('.md', '.json'))])
+        files = files[-200:] if len(files) > 200 else files
+
+        # Create JSON index
+        index_json = json.dumps(files, ensure_ascii=False, indent=2)
+
+        # Upload to S3
+        s3_client.put_object(
+            Bucket=statistics_bucket,
+            Key="stats-index.json",
+            Body=index_json.encode("utf-8"),
+            ContentType="application/json; charset=utf-8",
+            CacheControl="max-age=60"
+        )
+
+        print(f"[INDEX] Updated stats-index.json with {len(files)} files")
+
+    except Exception as e:
+        # Non-critical: log but don't interrupt
+        print(f"[INDEX WARNING] Failed to update index (non-critical): {str(e)}")
 
 def search_posts_with_retry(client, search_config, max_retries=3):
     """
@@ -476,7 +528,8 @@ def lambda_handler(event, context):
         if dense_texts and S3_BUCKET:
             try:
                 s3_client = boto3.client("s3")
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                now_jst = datetime.now(JST)
+                timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
 
                 # Save raw texts
                 s3_key = f"badword-analysis/dense_posts_{timestamp}.txt"
@@ -512,6 +565,9 @@ def lambda_handler(event, context):
         statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
         statistics_md_url = save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, text_only_short_count)
         statistics_json_url = save_statistics_json(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, text_only_short_count)
+
+        # Update statistics index (non-critical, errors are silently logged)
+        update_statistics_index(statistics_bucket)
 
         # Invoke Store Lambda asynchronously
         if items:
