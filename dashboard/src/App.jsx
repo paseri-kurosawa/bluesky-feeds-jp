@@ -27,23 +27,28 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.log(`[INFO] JSON not available for ${file}, falling back to markdown`)
+      console.log(`[INFO] JSON not available for ${file}, falling back to markdown: ${e.message}`)
     }
 
     // Fallback to markdown parsing
-    const mdResponse = await fetch(
-      `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
-    )
-    if (!mdResponse.ok) {
-      throw new Error(`Failed to fetch ${file}`)
-    }
-    const mdContent = await mdResponse.text()
-    const parsed = parseMarkdownStats(mdContent)
-    console.log(`[INFO] Parsed Markdown: ${file}`)
-    return {
-      ...parsed,
-      filename: file,
-      format: 'markdown'
+    try {
+      const mdResponse = await fetch(
+        `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
+      )
+      if (!mdResponse.ok) {
+        throw new Error(`Failed to fetch ${file}: ${mdResponse.status}`)
+      }
+      const mdContent = await mdResponse.text()
+      const parsed = parseMarkdownStats(mdContent)
+      console.log(`[INFO] Parsed Markdown: ${file}`)
+      return {
+        ...parsed,
+        filename: file,
+        format: 'markdown'
+      }
+    } catch (e) {
+      console.error(`[ERROR] Failed to parse both JSON and Markdown for ${file}: ${e.message}`)
+      throw e
     }
   }
 

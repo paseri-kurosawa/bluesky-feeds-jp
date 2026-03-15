@@ -22,7 +22,13 @@ ChartJS.register(
 )
 
 export function DistributionChart({ data }) {
-  if (!data || !data.tables) {
+  if (!data) {
+    return <p>No data available</p>
+  }
+
+  // Check for both JSON and Markdown formats
+  const hasData = data.dense_feed || data.tables
+  if (!hasData) {
     return <p>No data available</p>
   }
 
