@@ -1,6 +1,6 @@
 import './LatestReport.css'
 
-export function LatestReport({ data }) {
+export function LatestReport({ data, showTitle = false }) {
   if (!data) {
     return <p>No data available</p>
   }
@@ -9,7 +9,9 @@ export function LatestReport({ data }) {
   const df = data.dense_feed
 
   return (
-    <div className="latest-report">
+    <>
+      {showTitle && <h2 className="latest-report-title">Latest Report</h2>}
+      <div className="latest-report">
       <div className="report-section">
         <h3>Processing Summary</h3>
         <table className="metrics-table">
@@ -115,13 +117,14 @@ export function LatestReport({ data }) {
               <td>Dense Posts</td>
               <td className="number">{df.dense_posts}</td>
             </tr>
-            <tr>
-              <td>Dense Rate</td>
-              <td className="number">{df.dense_rate}%</td>
+            <tr className="passed">
+              <td><strong>Dense Rate</strong></td>
+              <td className="number"><strong>{df.dense_rate}%</strong></td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
+      </div>
+    </>
   )
 }

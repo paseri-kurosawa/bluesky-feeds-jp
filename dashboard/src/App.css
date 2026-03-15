@@ -70,3 +70,30 @@
   border-bottom: 2px solid #667eea;
   padding-bottom: 0.5rem;
 }
+
+.latest-report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  grid-column: 1 / -1;
+  padding: 0 1rem;
+  margin-bottom: 0rem;
+  border-bottom: 2px solid #667eea;
+  padding-bottom: 0.5rem;
+}
+
+.latest-report-title {
+  font-size: 1.3rem;
+  margin-bottom: 0;
+  color: #333;
+  margin: 0;
+}
+
+.latest-report-timestamp {
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.section.latest-report {
+  grid-column: 1 / -1;
+}

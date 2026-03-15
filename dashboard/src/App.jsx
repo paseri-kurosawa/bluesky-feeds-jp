@@ -82,10 +82,17 @@ export default function App() {
       <main className="dashboard-grid">
         {stats.length > 0 && (
           <>
-            <section className="section latest-report">
-              <h2>Latest Report</h2>
-              <LatestReport data={stats[stats.length - 1]} />
-            </section>
+            <>
+              <div className="latest-report-header">
+                <h2 className="latest-report-title">Latest Report</h2>
+                <span className="latest-report-timestamp">
+                  Executed: {stats.length > 0 ? stats[stats.length - 1].timestamp : 'N/A'}
+                </span>
+              </div>
+              <section className="section latest-report">
+                <LatestReport data={stats[stats.length - 1]} showTitle={false} />
+              </section>
+            </>
 
             <section className="section time-series">
               <h2>Processing Trends (Last 24h)</h2>

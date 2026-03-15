@@ -1,26 +1,12 @@
+
 .latest-report {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 1.5rem;
-  overflow-x: auto;
+  display: flex;
+  gap: 2rem;
+  width: 100%;
 }
 
 .report-section {
   flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-}
-
-@media (max-width: 1400px) {
-  .latest-report {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 900px) {
-  .latest-report {
-    grid-template-columns: 1fr;
-  }
 }
 
 .report-section h3 {
@@ -30,10 +16,20 @@
   font-weight: 600;
 }
 
+.latest-report > h3 {
+  font-size: 1.3rem;
+  margin-bottom: 1.5rem;
+  color: #333;
+  border-bottom: 2px solid #667eea;
+  padding-bottom: 0.5rem;
+  grid-column: 1 / -1;
+}
+
 .metrics-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  table-layout: auto;
 }
 
 .metrics-table thead {
