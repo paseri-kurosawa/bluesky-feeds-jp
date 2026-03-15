@@ -26,20 +26,30 @@ export function LineChart({ data }) {
     return <p>No data available</p>
   }
 
-  // Extract metrics from tables
+  // Extract metrics from both JSON and Markdown formats
   const metrics = data.map(d => {
-    const processingTable = d.tables['Processing Summary'] || []
-    const denseTable = d.tables['Dense Feed Statistics'] || []
+    if (d.format === 'json') {
+      return {
+        timestamp: d.timestamp,
+        totalFetched: d.processing_summary.total_fetched,
+        passed: d.processing_summary.passed_filters,
+        denseRate: d.dense_feed.dense_rate
+      }
+    } else {
+      // Markdown parsing (backward compatibility)
+      const processingTable = d.tables['Processing Summary'] || []
+      const denseTable = d.tables['Dense Feed Statistics'] || []
 
-    const totalFetched = parseInt(processingTable[0]?.[1]) || 0    // Total Fetched
-    const passed = parseInt(processingTable[4]?.[1]) || 0        // Passed Filters
-    const denseRate = parseFloat(denseTable[3]?.[1]) || 0        // Dense Rate
+      const totalFetched = parseInt(processingTable[0]?.[1]) || 0
+      const passed = parseInt(processingTable[4]?.[1]) || 0
+      const denseRate = parseFloat(denseTable[3]?.[1]) || 0
 
-    return {
-      timestamp: d.timestamp,
-      totalFetched,
-      passed,
-      denseRate
+      return {
+        timestamp: d.timestamp,
+        totalFetched,
+        passed,
+        denseRate
+      }
     }
   })
 

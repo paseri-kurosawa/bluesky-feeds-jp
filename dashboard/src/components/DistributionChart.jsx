@@ -26,20 +26,32 @@ export function DistributionChart({ data }) {
     return <p>No data available</p>
   }
 
-  const denseTable = data.tables['Dense Feed Statistics'] || []
-  const processingTable = data.tables['Processing Summary'] || []
+  // Parse data from both JSON and Markdown formats
+  let totalItems, textOnlyShort, densePosts, totalFetched, modLabels, nonJapanese, passed
 
-  // Parse dense feed data (denseTable[0] is header, [1]+ is data)
-  const totalItems = parseInt(denseTable[0]?.[1]) || 0      // Total Items
-  const textOnlyShort = parseInt(denseTable[1]?.[1]) || 0   // Text Only Short
-  const densePosts = parseInt(denseTable[2]?.[1]) || 0      // Dense Posts
+  if (data.format === 'json') {
+    totalItems = data.dense_feed.total_items
+    textOnlyShort = data.dense_feed.text_only_short
+    densePosts = data.dense_feed.dense_posts
+    totalFetched = data.processing_summary.total_fetched
+    modLabels = data.processing_summary.moderation_labels
+    nonJapanese = data.processing_summary.non_japanese
+    passed = data.processing_summary.passed_filters
+  } else {
+    // Markdown parsing (backward compatibility)
+    const denseTable = data.tables['Dense Feed Statistics'] || []
+    const processingTable = data.tables['Processing Summary'] || []
+
+    totalItems = parseInt(denseTable[0]?.[1]) || 0
+    textOnlyShort = parseInt(denseTable[1]?.[1]) || 0
+    densePosts = parseInt(denseTable[2]?.[1]) || 0
+    totalFetched = parseInt(processingTable[0]?.[1]) || 0
+    modLabels = parseInt(processingTable[2]?.[1]) || 0
+    nonJapanese = parseInt(processingTable[3]?.[1]) || 0
+    passed = parseInt(processingTable[4]?.[1]) || 0
+  }
+
   const notDense = totalItems - densePosts
-
-  // Parse filter data (processingTable[0] is header, [1]+ is data)
-  const totalFetched = parseInt(processingTable[0]?.[1]) || 0    // Total Fetched
-  const modLabels = parseInt(processingTable[2]?.[1]) || 0       // Moderation Labels
-  const nonJapanese = parseInt(processingTable[3]?.[1]) || 0     // Non-Japanese
-  const passed = parseInt(processingTable[4]?.[1]) || 0          // Passed Filters
 
   // Dense/Not Dense Pie Chart
   const denseChartData = {

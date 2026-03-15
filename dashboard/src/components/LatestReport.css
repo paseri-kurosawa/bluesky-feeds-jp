@@ -60,3 +60,33 @@
   color: #22c55e;
   font-weight: 500;
 }
+
+.matched-words {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #f9fafb;
+  border-radius: 8px;
+}
+
+.matched-words h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.matched-words ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.matched-words li {
+  padding: 0.25rem 0;
+  font-size: 0.875rem;
+}
+
+.matched-words strong {
+  color: #ef4444;
+  font-weight: 600;
+}

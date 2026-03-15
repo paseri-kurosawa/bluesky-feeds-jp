@@ -9,6 +9,44 @@ export default function App() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const parseStats = async (file) => {
+    // Try JSON first (better format)
+    const jsonFile = file.replace('.md', '.json')
+    try {
+      const jsonResponse = await fetch(
+        `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${jsonFile}`
+      )
+      if (jsonResponse.ok) {
+        const jsonData = await jsonResponse.json()
+        console.log(`[INFO] Parsed JSON: ${jsonFile}`)
+        return {
+          ...jsonData,
+          filename: file,
+          timestamp: jsonData.execution_time,
+          format: 'json'
+        }
+      }
+    } catch (e) {
+      console.log(`[INFO] JSON not available for ${file}, falling back to markdown`)
+    }
+
+    // Fallback to markdown parsing
+    const mdResponse = await fetch(
+      `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
+    )
+    if (!mdResponse.ok) {
+      throw new Error(`Failed to fetch ${file}`)
+    }
+    const mdContent = await mdResponse.text()
+    const parsed = parseMarkdownStats(mdContent)
+    console.log(`[INFO] Parsed Markdown: ${file}`)
+    return {
+      ...parsed,
+      filename: file,
+      format: 'markdown'
+    }
+  }
+
   const parseMarkdownStats = (mdContent) => {
     const lines = mdContent.split('\n')
     const data = {}
@@ -72,17 +110,10 @@ export default function App() {
       const statsData = []
       for (const file of sortedFiles) {
         try {
-          const fileResponse = await fetch(
-            `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
-          )
-          if (fileResponse.ok) {
-            const mdContent = await fileResponse.text()
-            const parsed = parseMarkdownStats(mdContent)
-            parsed.filename = file
-            const timestamp = extractTimestamp(file)
-            parsed.timestamp = timestamp
-            statsData.push(parsed)
-          }
+          const parsed = await parseStats(file)
+          const timestamp = extractTimestamp(file)
+          parsed.timestamp = parsed.timestamp || timestamp
+          statsData.push(parsed)
         } catch (e) {
           console.error(`Failed to fetch ${file}:`, e)
         }
