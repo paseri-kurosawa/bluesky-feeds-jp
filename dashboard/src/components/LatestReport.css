@@ -1,0 +1,62 @@
+.latest-report {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.report-section {
+  flex: 1;
+}
+
+.report-section h3 {
+  font-size: 1rem;
+  margin-bottom: 0.8rem;
+  color: #555;
+  font-weight: 600;
+}
+
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.metrics-table thead {
+  background-color: #f0f0f0;
+}
+
+.metrics-table th {
+  padding: 0.6rem;
+  text-align: left;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 2px solid #ddd;
+}
+
+.metrics-table td {
+  padding: 0.6rem;
+  border-bottom: 1px solid #eee;
+}
+
+.metrics-table tr:hover {
+  background-color: #fafafa;
+}
+
+.metrics-table .number {
+  font-weight: 500;
+  color: #667eea;
+}
+
+.metrics-table .percentage {
+  font-weight: 500;
+  color: #764ba2;
+}
+
+.metrics-table tr.passed {
+  background-color: #f0fdf4;
+}
+
+.metrics-table tr.passed td {
+  color: #22c55e;
+  font-weight: 500;
+}

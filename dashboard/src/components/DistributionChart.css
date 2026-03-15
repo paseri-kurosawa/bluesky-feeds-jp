@@ -1,0 +1,47 @@
+.distribution-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+
+@media (max-width: 768px) {
+  .distribution-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chart-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-item h3 {
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  color: #555;
+  font-weight: 600;
+}
+
+.pie-chart {
+  position: relative;
+  width: 100%;
+  height: 300px;
+}
+
+.bar-chart {
+  position: relative;
+  width: 100%;
+  height: 300px;
+}
+
+.chart-stat {
+  text-align: center;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.chart-stat strong {
+  color: #667eea;
+  font-size: 1.1rem;
+}
