@@ -2,11 +2,25 @@
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 1.5rem;
+  overflow-x: auto;
 }
 
 .report-section {
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
+}
+
+@media (max-width: 1400px) {
+  .latest-report {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .latest-report {
+    grid-template-columns: 1fr;
+  }
 }
 
 .report-section h3 {
