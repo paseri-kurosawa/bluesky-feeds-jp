@@ -26,15 +26,15 @@ export function LineChart({ data }) {
     return <p>No data available</p>
   }
 
-  // Extract metrics from JSON format
+  // Extract metrics from daily stats (date format)
   const metrics = data.map(d => ({
-    timestamp: d.timestamp,
+    date: d.date,
     totalFetched: d.processing_summary.total_fetched,
     passed: d.processing_summary.passed_filters,
     denseRate: d.dense_feed.dense_rate
   }))
 
-  const labels = metrics.map(m => new Date(m.timestamp).toLocaleTimeString())
+  const labels = metrics.map(m => m.date)
 
   const chartData = {
     labels,
