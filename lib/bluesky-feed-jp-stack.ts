@@ -171,16 +171,34 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       },
     });
 
-    // Set Store Lambda name in Ingest environment
-    ingestLambda.addEnvironment('STORE_FUNCTION_NAME', storeLambda.functionName);
+    // 6. Stats Lambda (Statistics aggregation - VPC外)
+    const statsLambda = new lambda.Function(this, 'StatsLambda', {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/stats')),
+      handler: 'handler.lambda_handler',
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 128,
+      logRetention: logs.RetentionDays.ONE_WEEK,
+      environment: {
+        STATISTICS_BUCKET: dashboardBucket.bucketName,
+      },
+    });
 
-    // Grant Ingest permission to invoke Store
+    // Set Store and Stats Lambda names in Ingest environment
+    ingestLambda.addEnvironment('STORE_FUNCTION_NAME', storeLambda.functionName);
+    ingestLambda.addEnvironment('STATS_FUNCTION_NAME', statsLambda.functionName);
+
+    // Grant Ingest permission to invoke Store and Stats
     storeLambda.grantInvoke(ingestLambda);
+    statsLambda.grantInvoke(ingestLambda);
 
     // Grant Ingest Lambda permission to read and write to S3
     badwordBucket.grantReadWrite(ingestLambda);
     dashboardBucket.grantWrite(ingestLambda);
     dashboardBucket.grantRead(ingestLambda); // For listing files to update index
+
+    // Grant Stats Lambda permission to read and write to S3
+    dashboardBucket.grantReadWrite(statsLambda);
 
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {

@@ -102,146 +102,6 @@ def extract_hashtag_count(record):
 
     return hashtag_count
 
-def save_statistics_json(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, text_only_short_count=0):
-    """
-    Generate and save statistics report as JSON to S3.
-
-    Args:
-        statistics_bucket: S3 bucket name for statistics
-        skipped_by_reason: Dict of skip reasons
-        items: List of processed items
-        badword_stats: Dict of badword statistics
-        dense_texts: List of dense feed texts
-        dense_rate: Dense feed rate (%)
-        posts: List of fetched posts
-        text_only_short_count: Count of text-only short posts (≤15 chars)
-
-    Returns:
-        S3 URL of saved JSON file or None on error
-    """
-    if not statistics_bucket:
-        return None
-
-    try:
-        s3_client = boto3.client("s3")
-        now_jst = datetime.now(JST)
-        timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
-        iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
-
-        # Calculate rates
-        total_fetched = len(posts)
-        passed_filters = len(items)
-
-        # Badword metrics
-        badword_hit_rate = (badword_stats['total_posts_with_badwords'] / passed_filters * 100) if passed_filters else 0
-        avg_matches = (badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
-                      if badword_stats['total_posts_with_badwords'] > 0 else 0)
-
-        # Sort matched words by count (descending)
-        matched_words_sorted = [
-            {"word": word, "count": count}
-            for word, count in sorted(
-                badword_stats['matched_words'].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )
-        ]
-
-        # Build JSON structure
-        stats_json = {
-            "execution_time": iso_timestamp,
-            "timestamp": timestamp,
-            "processing_summary": {
-                "total_fetched": total_fetched,
-                "invalid_fields": skipped_by_reason['invalid_fields'],
-                "moderation_labels": skipped_by_reason['moderation_labels'],
-                "non_japanese": skipped_by_reason['non_japanese'],
-                "passed_filters": passed_filters,
-                "rates": {
-                    "invalid_fields_rate": round(skipped_by_reason['invalid_fields'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "moderation_labels_rate": round(skipped_by_reason['moderation_labels'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "non_japanese_rate": round(skipped_by_reason['non_japanese'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
-                }
-            },
-            "badword_analysis": {
-                "posts_with_badwords": badword_stats['total_posts_with_badwords'],
-                "hit_rate": round(badword_hit_rate, 1),
-                "total_matches": badword_stats['total_badword_matches'],
-                "avg_matches_per_hit": round(avg_matches, 2),
-                "matched_words": matched_words_sorted,
-                "distribution": badword_stats['badword_distribution']
-            },
-            "dense_feed": {
-                "total_items": passed_filters,
-                "text_only_short": text_only_short_count,
-                "dense_posts": len(dense_texts),
-                "dense_rate": round(dense_rate, 1)
-            },
-            "version": "1.0"
-        }
-
-        # Save to S3
-        s3_key = f"stats/stats_{timestamp}.json"
-        s3_client.put_object(
-            Bucket=statistics_bucket,
-            Key=s3_key,
-            Body=json.dumps(stats_json, ensure_ascii=False, indent=2).encode("utf-8"),
-            ContentType="application/json; charset=utf-8",
-        )
-        print(f"[STATISTICS] Saved JSON report to s3://{statistics_bucket}/{s3_key}")
-        return f"s3://{statistics_bucket}/{s3_key}"
-
-    except Exception as e:
-        print(f"[STATISTICS ERROR] Failed to save JSON statistics: {str(e)}")
-        return None
-
-def update_statistics_index(statistics_bucket):
-    """
-    Update stats-index.json in S3 with latest stat files.
-    Errors are logged but don't interrupt the flow (non-critical operation).
-
-    Args:
-        statistics_bucket: S3 bucket name for statistics
-    """
-    if not statistics_bucket:
-        return
-
-    try:
-        s3_client = boto3.client("s3")
-
-        # List latest stat files
-        response = s3_client.list_objects_v2(
-            Bucket=statistics_bucket,
-            Prefix="stats/",
-            MaxKeys=1000
-        )
-
-        if 'Contents' not in response:
-            print("[INDEX] No stats files found")
-            return
-
-        # Filter for .json files, sort by date
-        files = sorted([obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.json')])
-        files = files[-200:] if len(files) > 200 else files
-
-        # Create JSON index
-        index_json = json.dumps(files, ensure_ascii=False, indent=2)
-
-        # Upload to S3
-        s3_client.put_object(
-            Bucket=statistics_bucket,
-            Key="stats-index.json",
-            Body=index_json.encode("utf-8"),
-            ContentType="application/json; charset=utf-8",
-            CacheControl="max-age=60"
-        )
-
-        print(f"[INDEX] Updated stats-index.json with {len(files)} files")
-
-    except Exception as e:
-        # Non-critical: log but don't interrupt
-        print(f"[INDEX WARNING] Failed to update index (non-critical): {str(e)}")
 
 def search_posts_with_retry(client, search_config, max_retries=3):
     """
@@ -475,12 +335,64 @@ def lambda_handler(event, context):
             except Exception as e:
                 print(f"[S3 ERROR] Failed to save dense texts: {str(e)}")
 
-        # Save statistics report (JSON only)
-        statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
-        statistics_json_url = save_statistics_json(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, text_only_short_count)
+        # Prepare statistics data for StatsLambda
+        now_jst = datetime.now(JST)
+        timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
+        iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Update statistics index (non-critical, errors are silently logged)
-        update_statistics_index(statistics_bucket)
+        # Calculate rates
+        total_fetched = len(posts)
+        passed_filters = len(items)
+        dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
+
+        # Badword metrics
+        badword_hit_rate = (badword_stats['total_posts_with_badwords'] / passed_filters * 100) if passed_filters else 0
+        avg_matches = (badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
+                      if badword_stats['total_posts_with_badwords'] > 0 else 0)
+
+        # Sort matched words by count (descending)
+        matched_words_sorted = [
+            {"word": word, "count": count}
+            for word, count in sorted(
+                badword_stats['matched_words'].items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+        ]
+
+        # Build statistics payload for StatsLambda
+        stats_payload = {
+            "execution_time": iso_timestamp,
+            "timestamp": timestamp,
+            "processing_summary": {
+                "total_fetched": total_fetched,
+                "invalid_fields": skipped_by_reason['invalid_fields'],
+                "moderation_labels": skipped_by_reason['moderation_labels'],
+                "non_japanese": skipped_by_reason['non_japanese'],
+                "passed_filters": passed_filters,
+                "rates": {
+                    "invalid_fields_rate": round(skipped_by_reason['invalid_fields'] / total_fetched * 100, 1) if total_fetched else 0,
+                    "moderation_labels_rate": round(skipped_by_reason['moderation_labels'] / total_fetched * 100, 1) if total_fetched else 0,
+                    "non_japanese_rate": round(skipped_by_reason['non_japanese'] / total_fetched * 100, 1) if total_fetched else 0,
+                    "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
+                }
+            },
+            "badword_analysis": {
+                "posts_with_badwords": badword_stats['total_posts_with_badwords'],
+                "hit_rate": round(badword_hit_rate, 1),
+                "total_matches": badword_stats['total_badword_matches'],
+                "avg_matches_per_hit": round(avg_matches, 2),
+                "matched_words": matched_words_sorted,
+                "distribution": badword_stats['badword_distribution']
+            },
+            "dense_feed": {
+                "total_items": passed_filters,
+                "text_only_short": text_only_short_count,
+                "dense_posts": len(dense_texts),
+                "dense_rate": round(dense_rate, 1)
+            },
+            "version": "1.0"
+        }
 
         # Invoke Store Lambda asynchronously
         if items:
@@ -502,6 +414,17 @@ def lambda_handler(event, context):
             )
             print(f"[INVOKE_DEBUG] Store Lambda invoked: {response['StatusCode']}")
 
+        # Invoke Stats Lambda asynchronously
+        stats_function_name = os.environ.get("STATS_FUNCTION_NAME", "")
+        if stats_function_name:
+            lambda_client = boto3.client("lambda")
+            response = lambda_client.invoke(
+                FunctionName=stats_function_name,
+                InvocationType="Event",  # Asynchronous
+                Payload=json.dumps({"batch_stats": stats_payload}),
+            )
+            print(f"[INVOKE_DEBUG] Stats Lambda invoked: {response['StatusCode']}")
+
         return {
             "fetched": len(items),
             "skipped": total_skipped,
@@ -509,7 +432,6 @@ def lambda_handler(event, context):
             "total_base_forms": len(dense_base_forms),
             "s3_url": s3_url,
             "s3_base_forms_url": s3_base_forms_url,
-            "statistics_json_url": statistics_json_url,
         }
 
     except Exception as e:
