@@ -11,7 +11,7 @@ export default function App() {
 
   const parseStats = async (file) => {
     const jsonResponse = await fetch(
-      `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
+      `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
     )
     if (!jsonResponse.ok) {
       throw new Error(`Failed to fetch ${file}: ${jsonResponse.status}`)
@@ -28,7 +28,7 @@ export default function App() {
     try {
       // Get list of stat files from index JSON
       const indexResponse = await fetch(
-        `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/stats-index.json`
+        `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats-index.json`
       )
 
       if (!indexResponse.ok) {

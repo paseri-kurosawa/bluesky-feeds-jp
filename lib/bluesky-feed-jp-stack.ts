@@ -137,20 +137,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       ],
     });
 
-    // === S3 Bucket for Statistics ===
-    const statisticsBucket = new s3.Bucket(this, 'StatisticsBucket', {
-      bucketName: `bluesky-feed-statistics-${env.CDK_DEFAULT_ACCOUNT}`,
-      versioned: false,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      lifecycleRules: [
-        {
-          // Keep statistics for 30 days
-          prefix: 'stats/',
-          expiration: cdk.Duration.days(30),
-        },
-      ],
-    });
+    // === S3 Bucket for Dashboard (reference existing bucket) ===
+    const dashboardBucket = s3.Bucket.fromBucketName(this, 'DashboardBucketRef', `bluesky-feed-dashboard-${env.CDK_DEFAULT_ACCOUNT}`);
 
     // 4. Ingest Lambda (Container Image - VPC外)
     const ingestLambda = new lambda.DockerImageFunction(this, 'IngestLambda', {
@@ -162,7 +150,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
         BSKY_HANDLE: env.BSKY_HANDLE || '',
         BSKY_APP_PASSWORD: env.BSKY_APP_PASSWORD || '',
         S3_BUCKET: badwordBucket.bucketName,
-        STATISTICS_BUCKET: statisticsBucket.bucketName,
+        STATISTICS_BUCKET: dashboardBucket.bucketName,
         STORE_FUNCTION_NAME: '', // Will be set after creation
       },
     });
@@ -191,8 +179,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     // Grant Ingest Lambda permission to read and write to S3
     badwordBucket.grantReadWrite(ingestLambda);
-    statisticsBucket.grantWrite(ingestLambda);
-    statisticsBucket.grantRead(ingestLambda); // For listing files to update index
+    dashboardBucket.grantWrite(ingestLambda);
+    dashboardBucket.grantRead(ingestLambda); // For listing files to update index
 
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {
@@ -249,9 +237,5 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       description: 'S3 bucket for badword analysis output',
     });
 
-    new cdk.CfnOutput(this, 'StatisticsBucketOutput', {
-      value: statisticsBucket.bucketName,
-      description: 'S3 bucket for ingest statistics reports',
-    });
   }
 }
