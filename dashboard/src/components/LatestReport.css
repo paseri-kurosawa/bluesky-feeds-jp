@@ -1,11 +1,12 @@
 .latest-report {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 1.5rem;
 }
 
 .report-section {
   flex: 1;
+  min-width: 0;
 }
 
 .report-section h3 {
