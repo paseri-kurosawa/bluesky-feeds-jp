@@ -509,7 +509,6 @@ def lambda_handler(event, context):
             "total_base_forms": len(dense_base_forms),
             "s3_url": s3_url,
             "s3_base_forms_url": s3_base_forms_url,
-            "statistics_md_url": statistics_md_url,
             "statistics_json_url": statistics_json_url,
         }
 
