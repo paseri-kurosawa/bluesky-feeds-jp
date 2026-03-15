@@ -10,91 +10,18 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   const parseStats = async (file) => {
-    // Try JSON first (better format)
-    const jsonFile = file.replace('.md', '.json')
-    try {
-      const jsonResponse = await fetch(
-        `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${jsonFile}`
-      )
-      if (jsonResponse.ok) {
-        const jsonData = await jsonResponse.json()
-        console.log(`[INFO] Parsed JSON: ${jsonFile}`)
-        return {
-          ...jsonData,
-          filename: file,
-          timestamp: jsonData.execution_time,
-          format: 'json'
-        }
-      }
-    } catch (e) {
-      console.log(`[INFO] JSON not available for ${file}, falling back to markdown: ${e.message}`)
+    const jsonResponse = await fetch(
+      `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
+    )
+    if (!jsonResponse.ok) {
+      throw new Error(`Failed to fetch ${file}: ${jsonResponse.status}`)
     }
-
-    // Fallback to markdown parsing
-    try {
-      const mdResponse = await fetch(
-        `https://bluesky-feed-statistics-878311109818.s3.ap-northeast-1.amazonaws.com/${file}`
-      )
-      if (!mdResponse.ok) {
-        throw new Error(`Failed to fetch ${file}: ${mdResponse.status}`)
-      }
-      const mdContent = await mdResponse.text()
-      const parsed = parseMarkdownStats(mdContent)
-      console.log(`[INFO] Parsed Markdown: ${file}`)
-      return {
-        ...parsed,
-        filename: file,
-        format: 'markdown'
-      }
-    } catch (e) {
-      console.error(`[ERROR] Failed to parse both JSON and Markdown for ${file}: ${e.message}`)
-      throw e
+    const jsonData = await jsonResponse.json()
+    return {
+      ...jsonData,
+      filename: file,
+      timestamp: jsonData.execution_time
     }
-  }
-
-  const parseMarkdownStats = (mdContent) => {
-    const lines = mdContent.split('\n')
-    const data = {}
-    const tables = {}
-
-    let currentSection = null
-    let headerRow = null
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim()
-
-      // Section header
-      if (line.startsWith('## ')) {
-        currentSection = line.replace('## ', '').trim()
-        tables[currentSection] = []
-        headerRow = null
-      }
-
-      // Table row
-      if (line.startsWith('| ') && currentSection) {
-        // Skip separator rows (|---|---|...)
-        if (line.includes('---')) {
-          continue
-        }
-
-        const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell)
-
-        // First data row is header
-        if (!headerRow) {
-          headerRow = cells
-          continue
-        }
-
-        // Subsequent rows are data
-        tables[currentSection].push(cells)
-      }
-
-      if (line.startsWith('**Execution Time:**')) {
-        data.executionTime = line.replace('**Execution Time:**', '').trim()
-      }
-    }
-
-    return { ...data, tables }
   }
 
   const fetchStats = async () => {
@@ -116,8 +43,6 @@ export default function App() {
       for (const file of sortedFiles) {
         try {
           const parsed = await parseStats(file)
-          const timestamp = extractTimestamp(file)
-          parsed.timestamp = parsed.timestamp || timestamp
           statsData.push(parsed)
         } catch (e) {
           console.error(`Failed to fetch ${file}:`, e)
@@ -132,16 +57,6 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }
-
-  const extractTimestamp = (filename) => {
-    const match = filename.match(/stats_(\d{8})_(\d{6})/)
-    if (match) {
-      const date = match[1]
-      const time = match[2]
-      return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)} ${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`
-    }
-    return 'Unknown'
   }
 
   useEffect(() => {
