@@ -12,70 +12,39 @@ export default function App() {
 
   const fetchLatestBatch = async () => {
     try {
-      // Fetch latest batch stats from stats/batch/
-      const bucketUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com`
+      // Fetch latest batch stats from summary/dashboard.json
+      // The summary contains all daily data, so we get the latest day's data
+      const summaryUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/summary/dashboard.json`
 
-      // List batch files and get the latest
-      const response = await fetch(`${bucketUrl}/stats/batch/?list-type=2&prefix=stats/batch/`)
-      if (!response.ok) {
-        throw new Error(`Failed to list batch files: ${response.status}`)
+      const summaryResponse = await fetch(summaryUrl)
+      if (!summaryResponse.ok) {
+        throw new Error(`Failed to fetch summary: ${summaryResponse.status}`)
       }
 
-      const text = await response.text()
-      const parser = new DOMParser()
-      const xmlDoc = parser.parseFromString(text, 'text/xml')
-      const contents = xmlDoc.getElementsByTagName('Contents')
+      const summaryData = await summaryResponse.json()
 
-      if (contents.length === 0) {
-        throw new Error('No batch files found')
+      // Get latest entry (last one in the data array)
+      if (summaryData.data && summaryData.data.length > 0) {
+        const latestData = summaryData.data[summaryData.data.length - 1]
+        setLatestBatch({
+          ...latestData,
+          execution_time: latestData.date // Use date as execution_time for display
+        })
+        // dailyStats is the entire data array from summary
+        setDailyStats(summaryData.data)
+      } else {
+        throw new Error('No data in summary')
       }
-
-      // Get latest file (last one)
-      const latestKey = contents[contents.length - 1].getElementsByTagName('Key')[0].textContent
-
-      const batchResponse = await fetch(`${bucketUrl}/${latestKey}`)
-      if (!batchResponse.ok) {
-        throw new Error(`Failed to fetch ${latestKey}: ${batchResponse.status}`)
-      }
-
-      const batchData = await batchResponse.json()
-      setLatestBatch({
-        ...batchData,
-        filename: latestKey
-      })
     } catch (err) {
       console.error('Error fetching latest batch:', err)
       setError(err.message)
     }
   }
 
-  const fetchDailyStats = async () => {
-    try {
-      // Fetch daily stats from stats/daily/stats-YYYY.json
-      const year = new Date().getFullYear()
-      const dailyUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/daily/stats-${year}.json`
-
-      const response = await fetch(dailyUrl)
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.info(`Daily stats file not found yet: ${dailyUrl}`)
-          setDailyStats([])
-          return
-        }
-        throw new Error(`Failed to fetch daily stats: ${response.status}`)
-      }
-
-      const data = await response.json()
-      setDailyStats(data)
-    } catch (err) {
-      console.error('Error fetching daily stats:', err)
-      setError(err.message)
-    }
-  }
-
   const fetchStats = async () => {
     try {
-      await Promise.all([fetchLatestBatch(), fetchDailyStats()])
+      // Fetch summary which contains both latest batch and daily stats
+      await fetchLatestBatch()
       setError(null)
     } finally {
       setLoading(false)
@@ -88,7 +57,7 @@ export default function App() {
     return () => clearInterval(interval)
   }, [])
 
-  if (loading && stats.length === 0) {
+  if (loading && !latestBatch) {
     return <div className="app-container"><p>Loading...</p></div>
   }
 
@@ -97,7 +66,7 @@ export default function App() {
       <header className="app-header">
         <h1>Bluesky Feed Statistics Dashboard</h1>
         <div className="refresh-info">
-          Last updated: {stats.length > 0 ? stats[stats.length - 1].timestamp : 'N/A'}
+          Last updated: {latestBatch ? latestBatch.execution_time : 'N/A'}
           {error && <div className="error-message">{error}</div>}
         </div>
       </header>
