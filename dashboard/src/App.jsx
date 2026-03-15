@@ -12,8 +12,25 @@ export default function App() {
 
   const fetchLatestBatch = async () => {
     try {
-      // Fetch latest batch stats from summary/dashboard.json
-      // The summary contains all daily data, so we get the latest day's data
+      // Fetch latest batch (single run)
+      const latestBatchUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/batch/latest.json`
+
+      const batchResponse = await fetch(latestBatchUrl)
+      if (!batchResponse.ok) {
+        throw new Error(`Failed to fetch latest batch: ${batchResponse.status}`)
+      }
+
+      const batchData = await batchResponse.json()
+      setLatestBatch(batchData)
+    } catch (err) {
+      console.error('Error fetching latest batch:', err)
+      setError(err.message)
+    }
+  }
+
+  const fetchDailyStats = async () => {
+    try {
+      // Fetch daily aggregated stats
       const summaryUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/summary/dashboard.json`
 
       const summaryResponse = await fetch(summaryUrl)
@@ -23,27 +40,21 @@ export default function App() {
 
       const summaryData = await summaryResponse.json()
 
-      // Get latest entry (last one in the data array)
       if (summaryData.data && summaryData.data.length > 0) {
-        const latestData = summaryData.data[summaryData.data.length - 1]
-        setLatestBatch({
-          ...latestData
-        })
-        // dailyStats is the entire data array from summary
         setDailyStats(summaryData.data)
       } else {
         throw new Error('No data in summary')
       }
     } catch (err) {
-      console.error('Error fetching latest batch:', err)
+      console.error('Error fetching daily stats:', err)
       setError(err.message)
     }
   }
 
   const fetchStats = async () => {
     try {
-      // Fetch summary which contains both latest batch and daily stats
-      await fetchLatestBatch()
+      // Fetch latest batch and daily stats in parallel
+      await Promise.all([fetchLatestBatch(), fetchDailyStats()])
       setError(null)
     } finally {
       setLoading(false)

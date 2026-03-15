@@ -67,14 +67,26 @@ def save_batch_stats(bucket, timestamp, batch_stats):
     """Store raw batch statistics to S3"""
 
     s3_key = f"stats/batch/stats_{timestamp}.json"
+    batch_json = json.dumps(batch_stats, ensure_ascii=False, indent=2).encode("utf-8")
 
     try:
+        # Save timestamped file
         s3_client.put_object(
             Bucket=bucket,
             Key=s3_key,
-            Body=json.dumps(batch_stats, ensure_ascii=False, indent=2),
+            Body=batch_json,
             ContentType="application/json; charset=utf-8"
         )
+
+        # Also save as latest.json (always overwrite)
+        s3_client.put_object(
+            Bucket=bucket,
+            Key="stats/batch/latest.json",
+            Body=batch_json,
+            ContentType="application/json; charset=utf-8"
+        )
+
+        print(f"[BATCH] Saved batch stats to {s3_key} and stats/batch/latest.json")
         return f"s3://{bucket}/{s3_key}"
     except Exception as e:
         print(f"[BATCH] Error saving batch stats: {str(e)}")
