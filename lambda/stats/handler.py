@@ -134,7 +134,7 @@ def aggregate_daily_stats(bucket, execution_time, batch_stats):
 
 
 def create_dashboard_summary(bucket):
-    """Aggregate all daily stats into dashboard summary (365 days)"""
+    """Aggregate all daily stats into dashboard format (365 days)"""
 
     year = datetime.now().strftime("%Y")
     daily_key = f"stats/daily/stats-{year}.json"
@@ -145,27 +145,27 @@ def create_dashboard_summary(bucket):
         response = s3_client.get_object(Bucket=bucket, Key=daily_key)
         daily_data = json.loads(response["Body"].read().decode("utf-8"))
     except s3_client.exceptions.NoSuchKey:
-        print(f"[SUMMARY] No daily stats found, skipping summary")
+        print(f"[DASHBOARD] No daily stats found, skipping dashboard summary")
         return None
 
-    # Create summary (just pass through the daily data for now)
+    # Create dashboard summary (just pass through the daily data for now)
     # Can be extended to aggregate multiple years, compute rolling averages, etc.
-    summary = {
+    dashboard_summary = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "data": daily_data,
         "record_count": len(daily_data)
     }
 
-    summary_key = "stats/dashboard/summary.json"
+    dashboard_key = "stats/summary/dashboard.json"
 
     try:
         s3_client.put_object(
             Bucket=bucket,
-            Key=summary_key,
-            Body=json.dumps(summary, ensure_ascii=False, indent=2),
+            Key=dashboard_key,
+            Body=json.dumps(dashboard_summary, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        return f"s3://{bucket}/{summary_key}"
+        return f"s3://{bucket}/{dashboard_key}"
     except Exception as e:
-        print(f"[SUMMARY] Error saving summary: {str(e)}")
+        print(f"[DASHBOARD] Error saving dashboard summary: {str(e)}")
         raise
