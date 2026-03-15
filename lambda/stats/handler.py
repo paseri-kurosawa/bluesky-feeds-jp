@@ -101,20 +101,101 @@ def aggregate_daily_stats(bucket, execution_time, batch_stats):
     # Extract today's entry if exists
     today_entry = next((entry for entry in daily_data if entry.get("date") == date), None)
 
-    # Create new entry from batch stats
-    new_entry = {
-        "date": date,
-        "execution_time": execution_time,
-        "badword_analysis": batch_stats.get("badword_analysis", {}),
-        "dense_feed": batch_stats.get("dense_feed", {}),
-        "processing_summary": batch_stats.get("processing_summary", {})
-    }
+    # Get batch stats data
+    batch_processing = batch_stats.get("processing_summary", {})
+    batch_badword = batch_stats.get("badword_analysis", {})
+    batch_dense = batch_stats.get("dense_feed", {})
 
-    # Update or append
     if today_entry:
+        # Aggregate: add new batch data to existing daily data
+        today_processing = today_entry.get("processing_summary", {})
+        today_badword = today_entry.get("badword_analysis", {})
+        today_dense = today_entry.get("dense_feed", {})
+
+        # Aggregate processing_summary (add counts)
+        aggregated_processing = {
+            "total_fetched": today_processing.get("total_fetched", 0) + batch_processing.get("total_fetched", 0),
+            "invalid_fields": today_processing.get("invalid_fields", 0) + batch_processing.get("invalid_fields", 0),
+            "moderation_labels": today_processing.get("moderation_labels", 0) + batch_processing.get("moderation_labels", 0),
+            "non_japanese": today_processing.get("non_japanese", 0) + batch_processing.get("non_japanese", 0),
+            "passed_filters": today_processing.get("passed_filters", 0) + batch_processing.get("passed_filters", 0),
+        }
+
+        # Recalculate rates based on aggregated totals
+        total_fetched = aggregated_processing["total_fetched"]
+        passed_filters = aggregated_processing["passed_filters"]
+
+        aggregated_processing["rates"] = {
+            "invalid_fields_rate": round(aggregated_processing["invalid_fields"] / total_fetched * 100, 1) if total_fetched else 0,
+            "moderation_labels_rate": round(aggregated_processing["moderation_labels"] / total_fetched * 100, 1) if total_fetched else 0,
+            "non_japanese_rate": round(aggregated_processing["non_japanese"] / total_fetched * 100, 1) if total_fetched else 0,
+            "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
+        }
+
+        # Aggregate badword_analysis (add counts, no matched_words)
+        posts_with_badwords = today_badword.get("posts_with_badwords", 0) + batch_badword.get("posts_with_badwords", 0)
+        total_matches = today_badword.get("total_matches", 0) + batch_badword.get("total_matches", 0)
+
+        aggregated_badword = {
+            "posts_with_badwords": posts_with_badwords,
+            "hit_rate": round(posts_with_badwords / passed_filters * 100, 1) if passed_filters else 0,
+            "total_matches": total_matches,
+            "avg_matches_per_hit": round(total_matches / posts_with_badwords, 2) if posts_with_badwords > 0 else 0,
+        }
+
+        # Aggregate dense_feed (add counts)
+        aggregated_dense = {
+            "total_items": today_dense.get("total_items", 0) + batch_dense.get("total_items", 0),
+            "text_only_short": today_dense.get("text_only_short", 0) + batch_dense.get("text_only_short", 0),
+            "dense_posts": today_dense.get("dense_posts", 0) + batch_dense.get("dense_posts", 0),
+            "dense_rate": round((today_dense.get("dense_posts", 0) + batch_dense.get("dense_posts", 0)) / (today_dense.get("total_items", 0) + batch_dense.get("total_items", 0)) * 100, 1) if (today_dense.get("total_items", 0) + batch_dense.get("total_items", 0)) > 0 else 0,
+        }
+
+        new_entry = {
+            "date": date,
+            "execution_time": execution_time,
+            "processing_summary": aggregated_processing,
+            "badword_analysis": aggregated_badword,
+            "dense_feed": aggregated_dense,
+        }
+
         idx = daily_data.index(today_entry)
         daily_data[idx] = new_entry
     else:
+        # First entry for the day
+        total_fetched = batch_processing.get("total_fetched", 0)
+        passed_filters = batch_processing.get("passed_filters", 0)
+        posts_with_badwords = batch_badword.get("posts_with_badwords", 0)
+        total_matches = batch_badword.get("total_matches", 0)
+        total_items = batch_dense.get("total_items", 0)
+        dense_posts = batch_dense.get("dense_posts", 0)
+
+        new_entry = {
+            "date": date,
+            "execution_time": execution_time,
+            "processing_summary": {
+                **batch_processing,
+                "rates": {
+                    "invalid_fields_rate": round(batch_processing.get("invalid_fields", 0) / total_fetched * 100, 1) if total_fetched else 0,
+                    "moderation_labels_rate": round(batch_processing.get("moderation_labels", 0) / total_fetched * 100, 1) if total_fetched else 0,
+                    "non_japanese_rate": round(batch_processing.get("non_japanese", 0) / total_fetched * 100, 1) if total_fetched else 0,
+                    "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
+                }
+            },
+            "badword_analysis": {
+                "posts_with_badwords": posts_with_badwords,
+                "hit_rate": round(posts_with_badwords / passed_filters * 100, 1) if passed_filters else 0,
+                "total_matches": total_matches,
+                "avg_matches_per_hit": round(total_matches / posts_with_badwords, 2) if posts_with_badwords > 0 else 0,
+            },
+            "dense_feed": {
+                "total_items": total_items,
+                "text_only_short": batch_dense.get("text_only_short", 0),
+                "dense_posts": dense_posts,
+                "dense_rate": round(dense_posts / total_items * 100, 1) if total_items > 0 else 0,
+            },
+        }
+
         daily_data.append(new_entry)
 
     # Sort by date
