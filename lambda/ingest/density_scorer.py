@@ -503,12 +503,13 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
     Calculate density score for a text with attribute adjustments.
 
     Algorithm:
-    - Step 0: Tokenize text once (cached for reuse)
-    - Step 1: Check token dispersion (repetition detection)
-    - Step 2: Extract word vectors using .ftz model
-    - Step 3: Calculate average vector norm
-    - Step 4: Apply attribute adjustments (before sigmoid normalization)
-    - Step 5: Normalize to 0-1 scale using sigmoid
+    - Step 0: Text-only short post check (text-only and ≤15 chars excluded)
+    - Step 1: Tokenize text once (cached for reuse)
+    - Step 2: Check token dispersion (repetition detection)
+    - Step 3: Extract word vectors using .ftz model
+    - Step 4: Calculate average vector norm
+    - Step 5: Apply attribute adjustments (before sigmoid normalization)
+    - Step 6: Normalize to 0-1 scale using sigmoid
 
     Args:
         text: Input text
@@ -523,11 +524,19 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         - matched_words: List of matched badwords
     """
     try:
-        # Step 0: Tokenize text once and cache for reuse
+        # Step 0: Text-only short post check (exclude from dense feed)
+        # Text-only (no images/videos) AND ≤15 characters → exclude
+        if not has_images:
+            char_count = len(text.strip())
+            if char_count <= 15:
+                print(f"[DENSITY] Excluded: text-only post with {char_count} chars (≤15)")
+                return 0.0, 0, []
+
+        # Step 1: Tokenize text once and cache for reuse
         tokens = tokenize_japanese(text)
         base_forms = extract_base_forms(text)
 
-        # Step 1: Token dispersion check (repetition detection)
+        # Step 2: Token dispersion check (repetition detection)
         config = load_config()
         disp_conf = config["scoring"]["token_dispersion"]
         disp_threshold = disp_conf["threshold"]

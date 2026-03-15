@@ -116,16 +116,13 @@ def lambda_handler(event, context):
                     "body": json.dumps({"error": f"Invalid cursor format: {str(e)}"})
                 }
 
-        # Pseudo-stream: only return posts from (spread_duration) ago or earlier
-        # This creates a smooth time window for gradual appearance of new batches
+        # Pseudo-stream: only return posts from current time or earlier
+        # Store Lambda distributes posts across 20-minute window starting from store time
+        # Get Feed returns posts where visible_ts <= current_time for gradual appearance
         current_time = time.time()
-        config = get_config()
-        pseudo_stream_config = config.get("pseudo_stream", {})
-        spread_duration = pseudo_stream_config.get("spread_duration_seconds", 1200)
-        cutoff_time = current_time - spread_duration
 
-        # Never return posts newer than cutoff_time
-        max_score = min(max_score, cutoff_time)
+        # Never return posts newer than current time
+        max_score = min(max_score, current_time)
 
         raw = r.zrevrangebyscore(
             feed_key,

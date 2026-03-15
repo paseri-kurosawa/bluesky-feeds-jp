@@ -3,7 +3,7 @@ import json
 import time
 import boto3
 from datetime import datetime
-from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms, is_text_only_and_short
+from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms
 
 # Load configuration
 def load_config():
@@ -99,7 +99,7 @@ def extract_hashtag_count(record):
 
     return hashtag_count
 
-def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, dense_filtered=None):
+def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, text_only_short_count=0):
     """
     Generate and save statistics report as Markdown to S3.
 
@@ -111,10 +111,8 @@ def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_
         dense_texts: List of dense feed texts
         dense_rate: Dense feed rate (%)
         posts: List of fetched posts
-        dense_filtered: Dict of dense feed filter counts (optional)
+        text_only_short_count: Count of text-only short posts (≤15 chars)
     """
-    if dense_filtered is None:
-        dense_filtered = {}
     if not statistics_bucket:
         return
 
@@ -161,18 +159,11 @@ def save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_
 ## Dense Feed Statistics
 | Metric | Value |
 |--------|-------|
-| Dense Posts | {len(dense_texts)} |
 | Total Items | {len(items)} |
+| Text Only Short | {text_only_short_count} |
+| Dense Posts | {len(dense_texts)} |
 | Dense Rate | {dense_rate:.1f}% |
 """
-
-        # Add dense feed filter breakdown if any filters applied
-        if dense_filtered and any(dense_filtered.values()):
-            markdown_content += "\n### Dense Feed Filters\n"
-            markdown_content += "| Filter | Count |\n|--------|-------|\n"
-            for filter_name, count in dense_filtered.items():
-                if count > 0:
-                    markdown_content += f"| {filter_name.replace('_', ' ').title()} | {count} |\n"
 
         markdown_content += """
 ---
@@ -260,13 +251,11 @@ def lambda_handler(event, context):
         items = []
         dense_texts = []  # Collect texts for Dense feed
         dense_base_forms = []  # Collect base forms (見出し語) for badword dictionary creation
+        text_only_short_count = 0  # Count of text-only posts ≤15 chars
         skipped_by_reason = {
             "invalid_fields": 0,
             "moderation_labels": 0,
             "non_japanese": 0,
-        }
-        dense_filtered = {
-            "text_only_short": 0,  # Text-only and <= 15 chars
         }
         badword_stats = {
             "total_posts_with_badwords": 0,
@@ -331,6 +320,10 @@ def lambda_handler(event, context):
                 for word in matched_words:
                     badword_stats["matched_words"][word] = badword_stats["matched_words"].get(word, 0) + 1
 
+            # Count text-only short posts (density_score = 0.0)
+            if density_score == 0.0:
+                text_only_short_count += 1
+
             # Convert indexed_at to timestamp
             ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))
 
@@ -342,22 +335,16 @@ def lambda_handler(event, context):
 
             # Collect text and base forms if it will go to Dense feed
             if density_score >= get_density_threshold():
-                # Dense フィード判定: 文字のみ（画像・動画なし）かつ15文字以内 → スキップ
-                should_skip_dense, skip_reason = is_text_only_and_short(text, has_images)
-                if should_skip_dense:
-                    print(f"[FILTER_DENSE] {uri} ({skip_reason})")
-                    dense_filtered["text_only_short"] += 1
-                else:
-                    # Escape newlines for single-line format
-                    text_escaped = text.replace("\n", "\\n").replace("\r", "\\r")
-                    dense_texts.append(text_escaped)
+                # Escape newlines for single-line format
+                text_escaped = text.replace("\n", "\\n").replace("\r", "\\r")
+                dense_texts.append(text_escaped)
 
-                    # Extract base forms (見出し語) for badword dictionary creation
-                    try:
-                        base_forms = extract_base_forms(text)
-                        dense_base_forms.extend(base_forms)
-                    except Exception as e:
-                        print(f"[EXTRACT_BASE_FORMS_ERROR] {uri}: {e}")
+                # Extract base forms (見出し語) for badword dictionary creation
+                try:
+                    base_forms = extract_base_forms(text)
+                    dense_base_forms.extend(base_forms)
+                except Exception as e:
+                    print(f"[EXTRACT_BASE_FORMS_ERROR] {uri}: {e}")
 
             print(f"[ADDED] {uri} (density={density_score:.3f})")
 
@@ -385,11 +372,6 @@ def lambda_handler(event, context):
         print(f"\n=== Dense Feed Statistics ===")
         dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
         print(f"Dense posts: {len(dense_texts)} / {len(items)} ({dense_rate:.1f}%)")
-        if dense_filtered and any(dense_filtered.values()):
-            print(f"\n=== Dense Feed Filters ===")
-            for filter_name, count in dense_filtered.items():
-                if count > 0:
-                    print(f"  - {filter_name}: {count}")
         print(f"=========================\n")
 
         # Calculate total skipped
@@ -435,7 +417,7 @@ def lambda_handler(event, context):
 
         # Save statistics report
         statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
-        statistics_url = save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, dense_filtered)
+        statistics_url = save_statistics_report(statistics_bucket, skipped_by_reason, items, badword_stats, dense_texts, dense_rate, posts, text_only_short_count)
 
         # Invoke Store Lambda asynchronously
         if items:

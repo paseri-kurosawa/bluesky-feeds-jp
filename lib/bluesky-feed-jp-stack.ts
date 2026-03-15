@@ -130,9 +130,9 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       lifecycleRules: [
         {
-          // Delete badword-analysis files after 7 days (intermediate analysis files)
+          // Delete badword-analysis files after 3 days (intermediate analysis files)
           prefix: 'badword-analysis/',
-          expiration: cdk.Duration.days(7),
+          expiration: cdk.Duration.days(3),
         },
       ],
     });
