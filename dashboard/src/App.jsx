@@ -10,51 +10,37 @@ export default function App() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  const fetchLatestBatch = async () => {
+  const fetchDashboardData = async () => {
     try {
-      // Fetch latest batch (single run)
-      const latestBatchUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/batch/latest.json`
+      // Fetch consolidated dashboard data (latest batch + daily stats)
+      const dashboardUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/summary/dashboard.json`
 
-      const batchResponse = await fetch(latestBatchUrl)
-      if (!batchResponse.ok) {
-        throw new Error(`Failed to fetch latest batch: ${batchResponse.status}`)
+      const response = await fetch(dashboardUrl)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch dashboard data: ${response.status}`)
       }
 
-      const batchData = await batchResponse.json()
-      setLatestBatch(batchData)
-    } catch (err) {
-      console.error('Error fetching latest batch:', err)
-      setError(err.message)
-    }
-  }
+      const dashboardData = await response.json()
 
-  const fetchDailyStats = async () => {
-    try {
-      // Fetch daily aggregated stats
-      const summaryUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/summary/dashboard.json`
-
-      const summaryResponse = await fetch(summaryUrl)
-      if (!summaryResponse.ok) {
-        throw new Error(`Failed to fetch summary: ${summaryResponse.status}`)
+      // Set latest batch from dashboard data
+      if (dashboardData.latest) {
+        setLatestBatch(dashboardData.latest)
       }
 
-      const summaryData = await summaryResponse.json()
-
-      if (summaryData.data && summaryData.data.length > 0) {
-        setDailyStats(summaryData.data)
-      } else {
-        throw new Error('No data in summary')
+      // Set daily stats from dashboard data
+      if (dashboardData.daily && dashboardData.daily.length > 0) {
+        setDailyStats(dashboardData.daily)
       }
     } catch (err) {
-      console.error('Error fetching daily stats:', err)
+      console.error('Error fetching dashboard data:', err)
       setError(err.message)
     }
   }
 
   const fetchStats = async () => {
     try {
-      // Fetch latest batch and daily stats in parallel
-      await Promise.all([fetchLatestBatch(), fetchDailyStats()])
+      // Fetch consolidated dashboard data
+      await fetchDashboardData()
       setError(null)
     } finally {
       setLoading(false)

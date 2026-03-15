@@ -116,6 +116,13 @@ export function DistributionChart({ data }) {
   return (
     <div className="distribution-container">
       <div className="chart-item">
+        <h3>Filter Breakdown</h3>
+        <div className="pie-chart">
+          <Pie data={filterChartData} options={filterOptions} />
+        </div>
+      </div>
+
+      <div className="chart-item">
         <h3>Dense Feed Ratio</h3>
         <div className="pie-chart">
           <Pie data={denseChartData} options={denseOptions} />
@@ -123,13 +130,6 @@ export function DistributionChart({ data }) {
         <p className="chart-stat">
           Dense Rate: <strong>{((densePosts / totalItems) * 100).toFixed(1)}%</strong>
         </p>
-      </div>
-
-      <div className="chart-item">
-        <h3>Filter Breakdown</h3>
-        <div className="pie-chart">
-          <Pie data={filterChartData} options={filterOptions} />
-        </div>
       </div>
     </div>
   )

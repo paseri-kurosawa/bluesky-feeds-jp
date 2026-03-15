@@ -1,9 +1,13 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import boto3
 
 s3_client = boto3.client("s3")
+
+def get_jst_now():
+    """Get current time in JST (UTC+9)"""
+    return datetime.utcnow() + timedelta(hours=9)
 
 
 def lambda_handler(event, context):
@@ -31,70 +35,85 @@ def lambda_handler(event, context):
                 "reason": "no_batch_stats"
             }
 
-        execution_time = batch_stats.get("execution_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        timestamp = batch_stats.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+        execution_time = batch_stats.get("execution_time", get_jst_now().strftime("%Y-%m-%d %H:%M:%S"))
+        timestamp = batch_stats.get("timestamp", get_jst_now().strftime("%Y%m%d_%H%M%S"))
 
         # Step 1: Store batch result
         batch_url = save_batch_stats(bucket, timestamp, batch_stats)
         print(f"[STATS] Saved batch stats to {batch_url}")
 
-        # Step 2: Aggregate daily stats
-        daily_url = aggregate_daily_stats(bucket, execution_time, batch_stats)
-        print(f"[STATS] Updated daily stats: {daily_url}")
-
-        # Step 3: Create dashboard summary
-        summary_url = create_dashboard_summary(bucket)
-        print(f"[STATS] Created dashboard summary: {summary_url}")
-
-        # Step 4: Check if previous day's data needs to be backfilled
+        # Step 2: Check if previous day's data needs to be backfilled
         # (If daily file was missing and needs to be recreated from batch files)
         try:
             from datetime import timedelta
-            now = datetime.now()
+            now = get_jst_now()
             yesterday = now - timedelta(days=1)
             yesterday_date = yesterday.strftime("%Y-%m-%d")
-            year = yesterday.strftime("%Y")
-            daily_key = f"stats/daily/stats-{year}.json"
+            daily_key = f"stats/daily/stats-{yesterday_date}.json"
+            print(f"[BACKFILL] Checking for yesterday ({yesterday_date}): {daily_key}")
 
-            # Check if yesterday's entry exists in daily
-            daily_data = []
+            # Check if yesterday's daily file exists
+            yesterday_exists = False
             try:
-                response = s3_client.get_object(Bucket=bucket, Key=daily_key)
-                daily_data = json.loads(response["Body"].read().decode("utf-8"))
-            except s3_client.exceptions.NoSuchKey:
+                s3_client.head_object(Bucket=bucket, Key=daily_key)
+                yesterday_exists = True
+            except Exception as e:
+                # File doesn't exist, which is expected for backfill
                 pass
 
-            yesterday_exists = any(entry.get("date") == yesterday_date for entry in daily_data)
-
             if not yesterday_exists:
-                print(f"[BACKFILL] Yesterday's data missing, attempting to backfill from batch files")
+                print(f"[BACKFILL] Yesterday's daily file missing, attempting to backfill from batch files")
                 yesterday_batches = list_batch_files_for_date(bucket, yesterday_date)
+                print(f"[BACKFILL] Found {len(yesterday_batches)} batch files")
 
                 if yesterday_batches:
                     backfilled_entry = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches)
                     if backfilled_entry:
-                        daily_data.append(backfilled_entry)
-                        daily_data.sort(key=lambda x: x["date"])
-
-                        # Save daily
+                        # Save daily file for yesterday
                         s3_client.put_object(
                             Bucket=bucket,
                             Key=daily_key,
-                            Body=json.dumps(daily_data, ensure_ascii=False, indent=2),
+                            Body=json.dumps(backfilled_entry, ensure_ascii=False, indent=2),
                             ContentType="application/json; charset=utf-8"
                         )
                         print(f"[BACKFILL] Backfilled yesterday's data from {len(yesterday_batches)} batch files")
 
-                        # Recreate dashboard summary
-                        summary_url = create_dashboard_summary(bucket)
-                        print(f"[BACKFILL] Updated dashboard summary after backfill")
+                        # Update dashboard.json immediately with new daily entry
+                        dashboard_key = "stats/summary/dashboard.json"
+                        try:
+                            response = s3_client.get_object(Bucket=bucket, Key=dashboard_key)
+                            dashboard_data = json.loads(response["Body"].read().decode("utf-8"))
+                        except s3_client.exceptions.NoSuchKey:
+                            dashboard_data = {
+                                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "latest": None,
+                                "daily": []
+                            }
+
+                        # Add or update the backfilled entry in daily array
+                        dashboard_data["daily"] = [d for d in dashboard_data.get("daily", []) if d.get("date") != yesterday_date]
+                        dashboard_data["daily"].append(backfilled_entry)
+                        dashboard_data["daily"].sort(key=lambda x: x.get("date", ""))
+                        dashboard_data["generated_at"] = get_jst_now().strftime("%Y-%m-%d %H:%M:%S")
+                        dashboard_data["record_count"] = len(dashboard_data["daily"])
+
+                        s3_client.put_object(
+                            Bucket=bucket,
+                            Key=dashboard_key,
+                            Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
+                            ContentType="application/json; charset=utf-8"
+                        )
+                        print(f"[BACKFILL] Updated dashboard.json with backfilled data")
         except Exception as e:
             print(f"[BACKFILL] Warning: Backfill check failed (non-critical): {str(e)}")
+
+        # Step 3: Create dashboard summary (完全に集計された日のみ含む)
+        summary_url = create_dashboard_summary(bucket)
+        print(f"[STATS] Created dashboard summary: {summary_url}")
 
         return {
             "status": "success",
             "batch_url": batch_url,
-            "daily_url": daily_url,
             "summary_url": summary_url
         }
 
@@ -109,7 +128,7 @@ def lambda_handler(event, context):
 
 
 def save_batch_stats(bucket, timestamp, batch_stats):
-    """Store raw batch statistics to S3"""
+    """Store raw batch statistics to S3 and update dashboard latest section"""
 
     s3_key = f"stats/batch/stats_{timestamp}.json"
     batch_json = json.dumps(batch_stats, ensure_ascii=False, indent=2).encode("utf-8")
@@ -123,15 +142,33 @@ def save_batch_stats(bucket, timestamp, batch_stats):
             ContentType="application/json; charset=utf-8"
         )
 
-        # Also save as latest.json (always overwrite)
+        print(f"[BATCH] Saved batch stats to {s3_key}")
+
+        # Update dashboard.json latest section
+        dashboard_key = "stats/summary/dashboard.json"
+        try:
+            response = s3_client.get_object(Bucket=bucket, Key=dashboard_key)
+            dashboard_data = json.loads(response["Body"].read().decode("utf-8"))
+        except s3_client.exceptions.NoSuchKey:
+            # Create new dashboard if doesn't exist
+            dashboard_data = {
+                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "latest": batch_stats,
+                "daily": []
+            }
+
+        # Update latest section
+        dashboard_data["generated_at"] = get_jst_now().strftime("%Y-%m-%d %H:%M:%S")
+        dashboard_data["latest"] = batch_stats
+
         s3_client.put_object(
             Bucket=bucket,
-            Key="stats/batch/latest.json",
-            Body=batch_json,
+            Key=dashboard_key,
+            Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
+        print(f"[BATCH] Updated dashboard.json latest section")
 
-        print(f"[BATCH] Saved batch stats to {s3_key} and stats/batch/latest.json")
         return f"s3://{bucket}/{s3_key}"
     except Exception as e:
         print(f"[BATCH] Error saving batch stats: {str(e)}")
@@ -260,164 +297,54 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
         return None
 
 
-def aggregate_daily_stats(bucket, execution_time, batch_stats):
-    """Merge batch stats into daily aggregation"""
-
-    year = execution_time.split("-")[0]  # Extract YYYY from "2026-03-15 HH:MM:SS"
-    date = execution_time.split(" ")[0]   # Extract YYYY-MM-DD
-
-    daily_key = f"stats/daily/stats-{year}.json"
-
-    # Get existing daily stats
-    daily_data = []
-    try:
-        response = s3_client.get_object(Bucket=bucket, Key=daily_key)
-        daily_data = json.loads(response["Body"].read().decode("utf-8"))
-    except s3_client.exceptions.NoSuchKey:
-        print(f"[DAILY] Creating new daily stats file: {daily_key}")
-        daily_data = []
-
-    # Extract today's entry if exists
-    today_entry = next((entry for entry in daily_data if entry.get("date") == date), None)
-
-    # Get batch stats data
-    batch_processing = batch_stats.get("processing_summary", {})
-    batch_badword = batch_stats.get("badword_analysis", {})
-    batch_dense = batch_stats.get("dense_feed", {})
-
-    if today_entry:
-        # Aggregate: add new batch data to existing daily data
-        today_processing = today_entry.get("processing_summary", {})
-        today_badword = today_entry.get("badword_analysis", {})
-        today_dense = today_entry.get("dense_feed", {})
-
-        # Aggregate processing_summary (add counts)
-        aggregated_processing = {
-            "total_fetched": today_processing.get("total_fetched", 0) + batch_processing.get("total_fetched", 0),
-            "invalid_fields": today_processing.get("invalid_fields", 0) + batch_processing.get("invalid_fields", 0),
-            "moderation_labels": today_processing.get("moderation_labels", 0) + batch_processing.get("moderation_labels", 0),
-            "non_japanese": today_processing.get("non_japanese", 0) + batch_processing.get("non_japanese", 0),
-            "passed_filters": today_processing.get("passed_filters", 0) + batch_processing.get("passed_filters", 0),
-        }
-
-        # Recalculate rates based on aggregated totals
-        total_fetched = aggregated_processing["total_fetched"]
-        passed_filters = aggregated_processing["passed_filters"]
-
-        aggregated_processing["rates"] = {
-            "invalid_fields_rate": round(aggregated_processing["invalid_fields"] / total_fetched * 100, 1) if total_fetched else 0,
-            "moderation_labels_rate": round(aggregated_processing["moderation_labels"] / total_fetched * 100, 1) if total_fetched else 0,
-            "non_japanese_rate": round(aggregated_processing["non_japanese"] / total_fetched * 100, 1) if total_fetched else 0,
-            "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
-        }
-
-        # Aggregate badword_analysis (add counts, no matched_words)
-        posts_with_badwords = today_badword.get("posts_with_badwords", 0) + batch_badword.get("posts_with_badwords", 0)
-        total_matches = today_badword.get("total_matches", 0) + batch_badword.get("total_matches", 0)
-
-        aggregated_badword = {
-            "posts_with_badwords": posts_with_badwords,
-            "hit_rate": round(posts_with_badwords / passed_filters * 100, 1) if passed_filters else 0,
-            "total_matches": total_matches,
-            "avg_matches_per_hit": round(total_matches / posts_with_badwords, 2) if posts_with_badwords > 0 else 0,
-        }
-
-        # Aggregate dense_feed (add counts)
-        aggregated_dense = {
-            "total_items": today_dense.get("total_items", 0) + batch_dense.get("total_items", 0),
-            "text_only_short": today_dense.get("text_only_short", 0) + batch_dense.get("text_only_short", 0),
-            "dense_posts": today_dense.get("dense_posts", 0) + batch_dense.get("dense_posts", 0),
-            "dense_rate": round((today_dense.get("dense_posts", 0) + batch_dense.get("dense_posts", 0)) / (today_dense.get("total_items", 0) + batch_dense.get("total_items", 0)) * 100, 1) if (today_dense.get("total_items", 0) + batch_dense.get("total_items", 0)) > 0 else 0,
-        }
-
-        new_entry = {
-            "date": date,
-            "execution_time": execution_time,
-            "processing_summary": aggregated_processing,
-            "badword_analysis": aggregated_badword,
-            "dense_feed": aggregated_dense,
-        }
-
-        idx = daily_data.index(today_entry)
-        daily_data[idx] = new_entry
-    else:
-        # First entry for the day
-        total_fetched = batch_processing.get("total_fetched", 0)
-        passed_filters = batch_processing.get("passed_filters", 0)
-        posts_with_badwords = batch_badword.get("posts_with_badwords", 0)
-        total_matches = batch_badword.get("total_matches", 0)
-        total_items = batch_dense.get("total_items", 0)
-        dense_posts = batch_dense.get("dense_posts", 0)
-
-        new_entry = {
-            "date": date,
-            "execution_time": execution_time,
-            "processing_summary": {
-                **batch_processing,
-                "rates": {
-                    "invalid_fields_rate": round(batch_processing.get("invalid_fields", 0) / total_fetched * 100, 1) if total_fetched else 0,
-                    "moderation_labels_rate": round(batch_processing.get("moderation_labels", 0) / total_fetched * 100, 1) if total_fetched else 0,
-                    "non_japanese_rate": round(batch_processing.get("non_japanese", 0) / total_fetched * 100, 1) if total_fetched else 0,
-                    "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
-                }
-            },
-            "badword_analysis": {
-                "posts_with_badwords": posts_with_badwords,
-                "hit_rate": round(posts_with_badwords / passed_filters * 100, 1) if passed_filters else 0,
-                "total_matches": total_matches,
-                "avg_matches_per_hit": round(total_matches / posts_with_badwords, 2) if posts_with_badwords > 0 else 0,
-            },
-            "dense_feed": {
-                "total_items": total_items,
-                "text_only_short": batch_dense.get("text_only_short", 0),
-                "dense_posts": dense_posts,
-                "dense_rate": round(dense_posts / total_items * 100, 1) if total_items > 0 else 0,
-            },
-        }
-
-        daily_data.append(new_entry)
-
-    # Sort by date
-    daily_data.sort(key=lambda x: x["date"])
-
-    # Save back to S3
-    try:
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=daily_key,
-            Body=json.dumps(daily_data, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        return f"s3://{bucket}/{daily_key}"
-    except Exception as e:
-        print(f"[DAILY] Error saving daily stats: {str(e)}")
-        raise
 
 
 def create_dashboard_summary(bucket):
-    """Aggregate all daily stats into dashboard format (365 days)"""
+    """Create dashboard summary with completed daily aggregations, preserving latest section"""
 
-    year = datetime.now().strftime("%Y")
-    daily_key = f"stats/daily/stats-{year}.json"
-
-    # Get daily stats
+    # List all daily files and load them
     daily_data = []
     try:
-        response = s3_client.get_object(Bucket=bucket, Key=daily_key)
-        daily_data = json.loads(response["Body"].read().decode("utf-8"))
-    except s3_client.exceptions.NoSuchKey:
-        print(f"[DASHBOARD] No daily stats found, skipping dashboard summary")
-        return None
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/stats-")
 
-    # Create dashboard summary (just pass through the daily data for now)
-    # Can be extended to aggregate multiple years, compute rolling averages, etc.
+        daily_files = []
+        for page in pages:
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    daily_files.append(obj['Key'])
+
+        # Sort by date (filename format: stats-YYYY-MM-DD.json)
+        daily_files.sort()
+
+        # Load each daily file
+        for daily_key in daily_files:
+            try:
+                response = s3_client.get_object(Bucket=bucket, Key=daily_key)
+                daily_entry = json.loads(response["Body"].read().decode("utf-8"))
+                daily_data.append(daily_entry)
+            except Exception as e:
+                print(f"[DASHBOARD] Warning: Failed to load {daily_key}: {str(e)}")
+    except Exception as e:
+        print(f"[DASHBOARD] Error listing daily files: {str(e)}")
+
+    # Get existing dashboard to preserve latest section
+    dashboard_key = "stats/summary/dashboard.json"
+    latest_batch = None
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=dashboard_key)
+        existing_dashboard = json.loads(response["Body"].read().decode("utf-8"))
+        latest_batch = existing_dashboard.get("latest")
+    except s3_client.exceptions.NoSuchKey:
+        pass
+
+    # Create dashboard summary with latest and daily sections
     dashboard_summary = {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "data": daily_data,
+        "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+        "latest": latest_batch,
+        "daily": daily_data,
         "record_count": len(daily_data)
     }
-
-    dashboard_key = "stats/summary/dashboard.json"
 
     try:
         s3_client.put_object(
