@@ -104,6 +104,7 @@ def aggregate_daily_stats(bucket, execution_time, batch_stats):
     # Create new entry from batch stats
     new_entry = {
         "date": date,
+        "execution_time": execution_time,
         "badword_analysis": batch_stats.get("badword_analysis", {}),
         "dense_feed": batch_stats.get("dense_feed", {}),
         "processing_summary": batch_stats.get("processing_summary", {})

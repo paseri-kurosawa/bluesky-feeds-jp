@@ -27,8 +27,7 @@ export default function App() {
       if (summaryData.data && summaryData.data.length > 0) {
         const latestData = summaryData.data[summaryData.data.length - 1]
         setLatestBatch({
-          ...latestData,
-          execution_time: latestData.date // Use date as execution_time for display
+          ...latestData
         })
         // dailyStats is the entire data array from summary
         setDailyStats(summaryData.data)
