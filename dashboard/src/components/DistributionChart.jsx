@@ -56,19 +56,18 @@ export function DistributionChart({ data }) {
     }]
   }
 
-  // Filter breakdown bar chart
+  // Filter breakdown pie chart
   const filterChartData = {
-    labels: ['Moderation\nLabels', 'Non-Japanese', 'Passed\nFilters'],
+    labels: ['Passed Filters', 'Moderation Labels', 'Non-Japanese'],
     datasets: [{
-      label: 'Count',
-      data: [modLabels, nonJapanese, passed],
+      data: [passed, modLabels, nonJapanese],
       backgroundColor: [
+        '#86efac',
         '#ef4444',
-        '#f97316',
-        '#22c55e'
+        '#e5e7eb'
       ],
-      borderColor: ['#dc2626', '#ea580c', '#16a34a'],
-      borderWidth: 1
+      borderColor: ['#4ade80', '#dc2626', '#d1d5db'],
+      borderWidth: 2
     }]
   }
 
@@ -96,16 +95,20 @@ export function DistributionChart({ data }) {
   const filterOptions = {
     responsive: true,
     maintainAspectRatio: true,
-    indexAxis: 'y',
     plugins: {
       legend: {
-        display: false
-      }
-    },
-    scales: {
-      x: {
-        beginAtZero: true,
-        max: totalFetched
+        position: 'bottom'
+      },
+      tooltip: {
+        callbacks: {
+          label: function(context) {
+            const label = context.label || ''
+            const value = context.parsed
+            const total = context.dataset.data.reduce((a, b) => a + b, 0)
+            const percentage = ((value / total) * 100).toFixed(1)
+            return `${label}: ${value} (${percentage}%)`
+          }
+        }
       }
     }
   }
@@ -124,8 +127,8 @@ export function DistributionChart({ data }) {
 
       <div className="chart-item">
         <h3>Filter Breakdown</h3>
-        <div className="bar-chart">
-          <Bar data={filterChartData} options={filterOptions} />
+        <div className="pie-chart">
+          <Pie data={filterChartData} options={filterOptions} />
         </div>
       </div>
     </div>

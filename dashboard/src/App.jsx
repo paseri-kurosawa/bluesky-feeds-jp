@@ -94,14 +94,14 @@ export default function App() {
               </section>
             </>
 
-            <section className="section time-series">
-              <h2>Processing Trends (Last 24h)</h2>
-              <LineChart data={stats} />
-            </section>
-
             <section className="section distributions">
               <h2>Distribution & Stats</h2>
               <DistributionChart data={stats[stats.length - 1]} />
+            </section>
+
+            <section className="section time-series">
+              <h2>Processing Trends (Last 24h)</h2>
+              <LineChart data={stats} />
             </section>
           </>
         )}
