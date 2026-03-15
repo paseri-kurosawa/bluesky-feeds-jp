@@ -307,8 +307,8 @@ def update_statistics_index(statistics_bucket):
             print("[INDEX] No stats files found")
             return
 
-        # Filter for .md and .json files, sort by date
-        files = sorted([obj['Key'] for obj in response['Contents'] if obj['Key'].endswith(('.md', '.json'))])
+        # Filter for .json files, sort by date
+        files = sorted([obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.json')])
         files = files[-200:] if len(files) > 200 else files
 
         # Create JSON index
