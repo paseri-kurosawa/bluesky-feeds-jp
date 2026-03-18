@@ -134,7 +134,7 @@ def search_posts_with_retry(client, search_config, max_retries=3):
             return res
         except (InvokeTimeoutError, httpx.TimeoutException) as e:
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
+                wait_time = 10 * (2 ** attempt)  # exponential backoff: 10s, 20s, 40s
                 print(f"[RETRY] Search timed out. Retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
                 time.sleep(wait_time)
             else:
