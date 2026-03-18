@@ -113,9 +113,9 @@ export function LatestReport({ data, showTitle = false }) {
               <td>Text Only Short</td>
               <td className="number">{df.text_only_short}</td>
             </tr>
-            <tr>
-              <td>Dense Posts</td>
-              <td className="number">{df.dense_posts}</td>
+            <tr className="passed">
+              <td><strong>Dense Posts</strong></td>
+              <td className="number"><strong>{df.dense_posts}</strong></td>
             </tr>
             <tr className="passed">
               <td><strong>Dense Rate</strong></td>
