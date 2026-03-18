@@ -300,50 +300,61 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
 
 
 def create_dashboard_summary(bucket):
-    """Create dashboard summary with completed daily aggregations, preserving latest section"""
-
-    # List all daily files and load them
-    daily_data = []
-    try:
-        paginator = s3_client.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/stats-")
-
-        daily_files = []
-        for page in pages:
-            if 'Contents' in page:
-                for obj in page['Contents']:
-                    daily_files.append(obj['Key'])
-
-        # Sort by date (filename format: stats-YYYY-MM-DD.json)
-        daily_files.sort()
-
-        # Load each daily file
-        for daily_key in daily_files:
-            try:
-                response = s3_client.get_object(Bucket=bucket, Key=daily_key)
-                daily_entry = json.loads(response["Body"].read().decode("utf-8"))
-                daily_data.append(daily_entry)
-            except Exception as e:
-                print(f"[DASHBOARD] Warning: Failed to load {daily_key}: {str(e)}")
-    except Exception as e:
-        print(f"[DASHBOARD] Error listing daily files: {str(e)}")
-
-    # Get existing dashboard to preserve latest section
+    """
+    Update dashboard summary with yesterday's daily aggregation only.
+    Keep existing daily data and latest section.
+    """
     dashboard_key = "stats/summary/dashboard.json"
+
+    # Calculate yesterday's date
+    now = get_jst_now()
+    yesterday = now - timedelta(days=1)
+    yesterday_date = yesterday.strftime("%Y-%m-%d")
+    yesterday_daily_key = f"stats/daily/stats-{yesterday_date}.json"
+
+    print(f"[DASHBOARD] Updating dashboard for yesterday: {yesterday_date}")
+
+    # Load yesterday's daily file if it exists
+    yesterday_entry = None
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=yesterday_daily_key)
+        yesterday_entry = json.loads(response["Body"].read().decode("utf-8"))
+        print(f"[DASHBOARD] Loaded yesterday's daily data: {yesterday_daily_key}")
+    except s3_client.exceptions.NoSuchKey:
+        print(f"[DASHBOARD] Yesterday's daily file not found: {yesterday_daily_key}")
+    except Exception as e:
+        print(f"[DASHBOARD] Error loading yesterday's daily: {str(e)}")
+
+    # Load existing dashboard to preserve data
+    existing_daily = []
     latest_batch = None
     try:
         response = s3_client.get_object(Bucket=bucket, Key=dashboard_key)
         existing_dashboard = json.loads(response["Body"].read().decode("utf-8"))
+        existing_daily = existing_dashboard.get("daily", [])
         latest_batch = existing_dashboard.get("latest")
+        print(f"[DASHBOARD] Loaded existing dashboard with {len(existing_daily)} daily entries")
     except s3_client.exceptions.NoSuchKey:
-        pass
+        print(f"[DASHBOARD] Dashboard file not found, creating new")
+    except Exception as e:
+        print(f"[DASHBOARD] Error loading existing dashboard: {str(e)}")
 
-    # Create dashboard summary with latest and daily sections
+    # Update daily data: replace or add yesterday's entry
+    if yesterday_entry:
+        # Remove existing entry for yesterday if any
+        existing_daily = [d for d in existing_daily if d.get("date") != yesterday_date]
+        # Add yesterday's entry
+        existing_daily.append(yesterday_entry)
+        # Sort by date
+        existing_daily.sort(key=lambda x: x.get("date", ""))
+        print(f"[DASHBOARD] Updated daily data for {yesterday_date}")
+
+    # Create updated dashboard summary
     dashboard_summary = {
         "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
         "latest": latest_batch,
-        "daily": daily_data,
-        "record_count": len(daily_data)
+        "daily": existing_daily,
+        "record_count": len(existing_daily)
     }
 
     try:
@@ -353,6 +364,7 @@ def create_dashboard_summary(bucket):
             Body=json.dumps(dashboard_summary, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
+        print(f"[DASHBOARD] Updated dashboard summary with {len(existing_daily)} daily records")
         return f"s3://{bucket}/{dashboard_key}"
     except Exception as e:
         print(f"[DASHBOARD] Error saving dashboard summary: {str(e)}")
