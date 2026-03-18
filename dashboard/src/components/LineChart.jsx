@@ -31,7 +31,9 @@ export function LineChart({ data }) {
     date: d.date,
     totalFetched: d.processing_summary.total_fetched,
     passed: d.processing_summary.passed_filters,
-    denseRate: d.dense_feed.dense_rate
+    denseRate: d.dense_feed.dense_rate,
+    badwordRate: d.badword_analysis.hit_rate,
+    getfeedCalls: d.getfeed_stats?.total_invocations ?? 0
   }))
 
   const labels = metrics.map(m => m.date)
@@ -63,6 +65,23 @@ export function LineChart({ data }) {
         tension: 0.4,
         fill: true,
         yAxisID: 'y1'
+      },
+      {
+        label: 'Badword Rate (%)',
+        data: metrics.map(m => m.badwordRate),
+        borderColor: '#ef4444',
+        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+        tension: 0.4,
+        fill: true,
+        yAxisID: 'y1'
+      },
+      {
+        label: 'GetFeed Calls',
+        data: metrics.map(m => m.getfeedCalls),
+        borderColor: '#8b5cf6',
+        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+        tension: 0.4,
+        fill: true
       }
     ]
   }
@@ -101,7 +120,7 @@ export function LineChart({ data }) {
         position: 'right',
         title: {
           display: true,
-          text: 'Dense Rate (%)'
+          text: 'Rate (%)'
         },
         grid: {
           drawOnChartArea: false

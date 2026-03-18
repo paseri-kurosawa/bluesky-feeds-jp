@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import boto3
 
 s3_client = boto3.client("s3")
+cloudwatch_client = boto3.client("cloudwatch")
 
 def get_jst_now():
     """Get current time in JST (UTC+9)"""
@@ -240,6 +241,9 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
             "total_items": 0,
             "text_only_short": 0,
             "dense_posts": 0,
+        },
+        "getfeed_stats": {
+            "total_invocations": None
         }
     }
 
@@ -290,6 +294,14 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
 
         aggregated["dense_feed"]["dense_rate"] = round(dense_posts / total_items * 100, 1) if total_items > 0 else 0
 
+        # Query GetFeed invocations from CloudWatch Metrics
+        getfeed_function_name = os.environ.get('GETFEED_FUNCTION_NAME')
+        if getfeed_function_name:
+            invocations = get_getfeed_invocations(getfeed_function_name, target_date)
+            aggregated["getfeed_stats"]["total_invocations"] = invocations
+        else:
+            print(f"[GETFEED] GETFEED_FUNCTION_NAME not set, skipping invocation tracking")
+
         print(f"[AGGREGATE] Aggregated {len(batch_files)} files for {target_date}")
         return aggregated
     except Exception as e:
@@ -297,6 +309,49 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
         return None
 
 
+
+
+def get_getfeed_invocations(function_name, target_date):
+    """
+    Query CloudWatch Metrics for GetFeed Lambda invocations for a specific date.
+
+    Args:
+        function_name: Lambda function name
+        target_date: Date string in format YYYY-MM-DD
+
+    Returns:
+        Total invocations for the day, or None if query fails
+    """
+    try:
+        # Parse target date
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+        start_time = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        # Query CloudWatch Metrics for Invocations
+        response = cloudwatch_client.get_metric_statistics(
+            Namespace='AWS/Lambda',
+            MetricName='Invocations',
+            Dimensions=[
+                {'Name': 'FunctionName', 'Value': function_name}
+            ],
+            StartTime=start_time,
+            EndTime=end_time,
+            Period=86400,  # 1 day in seconds
+            Statistics=['Sum']
+        )
+
+        if response['Datapoints']:
+            total = sum(point['Sum'] for point in response['Datapoints'])
+            print(f"[GETFEED] Found {int(total)} invocations for {target_date}")
+            return int(total)
+        else:
+            print(f"[GETFEED] No invocations found for {target_date}")
+            return 0
+
+    except Exception as e:
+        print(f"[GETFEED] Error querying invocations: {str(e)}")
+        return None
 
 
 def create_dashboard_summary(bucket):

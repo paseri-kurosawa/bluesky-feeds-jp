@@ -8,6 +8,8 @@ import os
 import sys
 from datetime import datetime, timezone
 from atproto import Client
+from atproto_client.models.app.bsky.feed.generator import Record as GeneratorRecord
+from atproto_client.models.com.atproto.repo.put_record import Data as PutData
 
 # Load environment variables
 BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
@@ -21,15 +23,15 @@ if not BSKY_HANDLE or not BSKY_APP_PASSWORD:
 FEEDS = [
     {
         "rkey": "japanese-raw-feed",
-        "displayName": "JP Raw (PoC)",
-        "description": "[PoC]日本語の時系列順ポストです。正常動作しますが、調整中です。DO NOT USE FOR PRODUCTION.",
-        "avatar": None,
+        "displayName": "Japanese Raw Feed",
+        "description": "日本語の[時系列順]フィード。※正常動作しますが、挙動を調整することがあります。",
+        "avatar": "feed_icon_purple.png",
     },
     {
         "rkey": "japanese-dense-feed",
-        "displayName": "JP Dense (PoC)",
-        "description": "[PoC]日本語の時系列順\"高密度\"ポストです。正常動作しますが、調整中です。DO NOT USE FOR PRODUCTION.",
-        "avatar": None,
+        "displayName": "Japanese Dense Feed",
+        "description": "日本語の[時系列順／高密度／平穏]フィード。※正常動作しますが、挙動を調整することがあります。",
+        "avatar": "feed_icon_green.png",
     },
 ]
 
@@ -49,36 +51,56 @@ def publish_feeds():
         rkey = feed_config["rkey"]
         display_name = feed_config["displayName"]
         description = feed_config["description"]
+        avatar_file = feed_config["avatar"]
 
         print(f"\n  Publishing: {rkey}")
         print(f"    Display: {display_name}")
         print(f"    Desc: {description[:60]}...")
 
         try:
+            # Upload avatar image if provided
+            avatar_blob = None
+            if avatar_file:
+                # Use absolute path to scripts directory
+                avatar_path = "/mnt/c/Users/k623m/bluesky-feed-jp/scripts/" + avatar_file
+                if os.path.exists(avatar_path):
+                    with open(avatar_path, "rb") as f:
+                        avatar_data = f.read()
+                    upload_response = client.upload_blob(avatar_data)
+                    avatar_blob = upload_response.blob
+                    print(f"    ✓ Avatar uploaded: {avatar_blob}")
+                else:
+                    print(f"    ✗ Avatar file not found")
 
-            # Create new feed generator record
-            from atproto_client.models.com.atproto.repo.create_record import Data
-
+            # Create record as dict with proper casing
             now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-            record = {
+            record_dict = {
                 "did": "did:web:gtf03qzry3.execute-api.ap-northeast-1.amazonaws.com",
                 "displayName": display_name,
                 "description": description,
                 "createdAt": now_iso,
             }
 
-            create_data = Data(
+            # Add avatar if available (use by_alias=True for correct AT Protocol format)
+            if avatar_blob:
+                record_dict["avatar"] = avatar_blob.model_dump(by_alias=True)
+
+            put_data = PutData(
                 repo=user_did,
                 collection="app.bsky.feed.generator",
                 rkey=rkey,
-                record=record,
+                record=record_dict,
             )
 
-            response = client.com.atproto.repo.create_record(create_data)
+            response = client.com.atproto.repo.put_record(put_data)
 
             feed_uri = f"at://{user_did}/app.bsky.feed.generator/{rkey}"
             print(f"    ✓ Published: {feed_uri}")
+
+            # Also update profile to display the avatar
+            if avatar_blob:
+                print(f"    ℹ️  Avatar will be displayed on feed profile")
 
         except Exception as e:
             print(f"    ❌ Error: {e}")
