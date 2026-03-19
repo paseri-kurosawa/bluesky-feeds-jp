@@ -24,6 +24,11 @@ def get_density_threshold():
     config = get_config()
     return float(config["scoring"]["density_threshold"]["threshold"])
 
+def get_batch_spread_seconds():
+    """Get batch spread seconds from config.json"""
+    config = get_config()
+    return int(config["scheduling"]["batch_spread_seconds"])
+
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
 MAX_ITEMS = 5000
 
@@ -70,7 +75,8 @@ def lambda_handler(event, context):
         dense_stored = 0
 
         # Calculate time distribution for batch
-        batch_spread_seconds = MAX_ITEMS_TIME_WINDOW = 1200  # 20 minutes
+        batch_spread_seconds = get_batch_spread_seconds()
+        MAX_ITEMS_TIME_WINDOW = batch_spread_seconds
         items_count = len(items)
 
         for idx, item in enumerate(items):
@@ -87,10 +93,10 @@ def lambda_handler(event, context):
             if ts < 0:
                 continue
 
-            # Calculate visible_ts: distribute posts across 20-minute window from now
+            # Calculate visible_ts: distribute posts across the batch_spread_seconds window from now
             # This ensures the latest batch is gradually displayed starting from store time
             # First post: visible_ts = now
-            # Last post: visible_ts = now + 1200 seconds
+            # Last post: visible_ts = now + batch_spread_seconds
             if items_count > 1:
                 offset = (idx / (items_count - 1)) * batch_spread_seconds
             else:

@@ -11,7 +11,7 @@ from atproto_client.models.com.atproto.repo.delete_record import Data as DeleteD
 
 # Bluesky credentials for the old account
 BSKY_HANDLE = "example.bsky.social"
-BSKY_APP_PASSWORD = "747w-ay65-5fv6-3vci"
+BSKY_APP_PASSWORD = "pass-word-bsky-abcd"
 
 # Feed rkeys to delete
 FEED_RKEYS = [

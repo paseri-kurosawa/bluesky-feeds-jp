@@ -8,7 +8,7 @@
     "query": "lang:ja",
     "query_note": "検索クエリ。言語フィルタリング用。",
     "limit": 100,
-    "limit_note": "1回の検索で取得する最大ポスト数。Bluesky API制限は100まで。20分ごと実行で時間あたり300ポスト。",
+    "limit_note": "1回の検索で取得する最大ポスト数。Bluesky API制限は100まで。10分ごと実行で時間あたり600ポスト。",
     "sort": "latest"
   },
   "language_detection": {

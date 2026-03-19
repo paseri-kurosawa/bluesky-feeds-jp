@@ -3,6 +3,11 @@
   "_note_1": "すべてのポスト属性調整（reply, images, hashtags）は Sigmoid 正規化【前】に適用されます。",
   "_note_2": "調整後の avg_norm は Sigmoid 関数によって 0-1 スケールに正規化されます。",
   "_note_3": "算式: normalized_score = 1 / (1 + e^(-steepness * (adjusted_norm - midpoint)))",
+  "scheduling": {
+    "description": "スケジューリング設定（EventBridge実行周期に対応）",
+    "batch_spread_seconds": 600,
+    "batch_spread_note": "ポストの可視化時間分布。10分ごとの実行に対応。単位: 秒。"
+  },
   "search": {
     "description": "Bluesky 検索パラメータ",
     "query": "lang:ja",
