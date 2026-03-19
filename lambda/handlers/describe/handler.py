@@ -21,9 +21,9 @@ def lambda_handler(event, context):
     """
     feed_did = os.environ.get('FEED_DID', 'did:web:example.com')
 
-    # Feed URIs for example.bsky.social
-    raw_feed_uri = "at://did:plc:p5lasawfxrns4xs7646gc3hp/app.bsky.feed.generator/japanese-raw-feed"
-    dense_feed_uri = "at://did:plc:p5lasawfxrns4xs7646gc3hp/app.bsky.feed.generator/japanese-dense-feed"
+    # Feed URIs for paseri-kurosawa.bsky.social
+    raw_feed_uri = "at://did:plc:yqlqxclzbkxgft7atmezp7eg/app.bsky.feed.generator/japanese-raw-feed"
+    dense_feed_uri = "at://did:plc:yqlqxclzbkxgft7atmezp7eg/app.bsky.feed.generator/japanese-dense-feed"
 
     # Load images as data URLs
     blue_image = load_image_as_data_url("feed_image_blue.png")

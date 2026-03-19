@@ -7,30 +7,40 @@ Creates feed generator records for both raw and dense feeds.
 import os
 import sys
 from datetime import datetime, timezone
+from dotenv import load_dotenv
 from atproto import Client
 from atproto_client.models.app.bsky.feed.generator import Record as GeneratorRecord
 from atproto_client.models.com.atproto.repo.put_record import Data as PutData
 
-# Load environment variables
+# Load environment variables from .env
+load_dotenv()
+
 BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
 BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
+FEED_DID = os.environ.get("FEED_DID", "")
 
-if not BSKY_HANDLE or not BSKY_APP_PASSWORD:
-    print("❌ Error: BSKY_HANDLE and BSKY_APP_PASSWORD must be set in .env")
+if not BSKY_HANDLE or not BSKY_APP_PASSWORD or not FEED_DID:
+    print("❌ Error: BSKY_HANDLE, BSKY_APP_PASSWORD, and FEED_DID must be set in .env")
     sys.exit(1)
 
 # Feed configuration
 FEEDS = [
     {
         "rkey": "japanese-raw-feed",
-        "displayName": "Japanese Raw Feed",
-        "description": "日本語の[時系列順]フィード。※正常動作しますが、挙動を調整することがあります。",
+        "displayName": "Japanese Raw",
+        "description": '''日本語の[時系列順]フィードです。
+日本語チェックを厳密に行っています。
+
+※アルゴリズムは随時改善します''',
         "avatar": "feed_icon_purple.png",
     },
     {
         "rkey": "japanese-dense-feed",
-        "displayName": "Japanese Dense Feed",
-        "description": "日本語の[時系列順／高密度／平穏]フィード。※正常動作しますが、挙動を調整することがあります。",
+        "displayName": "Japanese Dense",
+        "description": '''日本語の[時系列順]フィードです。
+[高品質／安全／平穏]なポストを重視します。
+
+※アルゴリズムは随時改善します''',
         "avatar": "feed_icon_green.png",
     },
 ]
@@ -76,7 +86,7 @@ def publish_feeds():
             now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
             record_dict = {
-                "did": "did:web:gtf03qzry3.execute-api.ap-northeast-1.amazonaws.com",
+                "did": FEED_DID,
                 "displayName": display_name,
                 "description": description,
                 "createdAt": now_iso,
