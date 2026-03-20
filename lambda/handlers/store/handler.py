@@ -144,12 +144,16 @@ def lambda_handler(event, context):
 
         # Invoke AggregationLambda asynchronously
         aggregation_function_name = os.environ.get("AGGREGATION_FUNCTION_NAME", "")
+        print(f"[STORE] AGGREGATION_FUNCTION_NAME: {aggregation_function_name}")
+        print(f"[STORE] batch_stats present: {bool(batch_stats)}")
+
         if aggregation_function_name and batch_stats:
             try:
                 lambda_client = boto3.client("lambda")
                 aggregation_payload = {
                     "batch_stats": batch_stats
                 }
+                print(f"[STORE] Invoking AggregationLambda with payload size: {len(json.dumps(aggregation_payload))}")
                 response = lambda_client.invoke(
                     FunctionName=aggregation_function_name,
                     InvocationType="Event",  # Asynchronous
@@ -158,6 +162,10 @@ def lambda_handler(event, context):
                 print(f"[STORE] AggregationLambda invoked: {response['StatusCode']}")
             except Exception as e:
                 print(f"[STORE] Failed to invoke AggregationLambda: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"[STORE] Skipping AggregationLambda: function_name={aggregation_function_name}, has_stats={bool(batch_stats)}")
 
         return {
             "stored_raw": raw_stored,
