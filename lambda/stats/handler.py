@@ -16,8 +16,8 @@ try:
         ssl=True,
         ssl_cert_reqs="required",
         decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
+        socket_connect_timeout=3,
+        socket_timeout=10,
     )
     valkey_client.ping()
     print("[VALKEY] Connected successfully")

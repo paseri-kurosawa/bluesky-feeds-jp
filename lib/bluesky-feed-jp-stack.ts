@@ -176,11 +176,13 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/stats')),
       handler: 'handler.lambda_handler',
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 128,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 512,
       logRetention: logs.RetentionDays.ONE_WEEK,
+      layers: [redisLayer],
       environment: {
         STATISTICS_BUCKET: dashboardBucket.bucketName,
+        VALKEY_ENDPOINT: env.VALKEY_ENDPOINT || 'localhost',
       },
     });
 
