@@ -183,7 +183,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       layers: [redisLayer],
       vpc: vpc,
       vpcSubnets: {
-        subnets: vpc.privateSubnets,
+        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
       },
       securityGroups: [lambdaSecurityGroup],
       environment: {
