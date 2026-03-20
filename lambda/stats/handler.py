@@ -87,10 +87,14 @@ def aggregate_hashtags_from_raw_feed(bucket):
 
 def save_trends_current(bucket, top_hashtags):
     """Save top hashtags to stats/trends/trends-current.json"""
+    if not top_hashtags:
+        print("[TRENDS] No hashtags to save, skipping")
+        return None
+
     try:
         trends_data = {
             "timestamp": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-            "top_hashtags": top_hashtags if top_hashtags else []
+            "top_hashtags": top_hashtags
         }
 
         s3_key = "stats/trends/trends-current.json"
@@ -123,8 +127,9 @@ def lambda_handler(event, context):
         if not bucket:
             raise ValueError("STATISTICS_BUCKET environment variable not set")
 
-        # Extract batch stats from event (passed from IngestLambda)
+        # Extract batch stats and top hashtags from event (passed from AggregationLambda or IngestLambda)
         batch_stats = event.get("batch_stats", {})
+        top_hashtags = event.get("top_hashtags", [])
 
         if not batch_stats:
             print("[STATS] No batch stats provided, skipping")
@@ -205,14 +210,20 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"[BACKFILL] Warning: Backfill check failed (non-critical): {str(e)}")
 
-        # Step 3: Aggregate hashtags from raw feed
-        top_hashtags = aggregate_hashtags_from_raw_feed(bucket)
+        # Step 3: Save trends (from AggregationLambda or fallback to local aggregation)
         trends_url = None
         if top_hashtags:
+            print("[STATS] Using top_hashtags from AggregationLambda")
             trends_url = save_trends_current(bucket, top_hashtags)
-            print(f"[STATS] Saved trends: {trends_url}")
+            if trends_url:
+                print(f"[STATS] Saved trends: {trends_url}")
         else:
-            print("[STATS] No hashtags to save")
+            print("[STATS] No top_hashtags provided, attempting local aggregation")
+            local_hashtags = aggregate_hashtags_from_raw_feed(bucket)
+            if local_hashtags:
+                trends_url = save_trends_current(bucket, local_hashtags)
+                if trends_url:
+                    print(f"[STATS] Saved trends: {trends_url}")
 
         # Step 4: Create dashboard summary (完全に集計された日のみ含む)
         summary_url = create_dashboard_summary(bucket)

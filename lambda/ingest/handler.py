@@ -422,7 +422,10 @@ def lambda_handler(event, context):
         # Invoke Store Lambda asynchronously
         if items:
             lambda_client = boto3.client("lambda")
-            payload = {"items": items}
+            payload = {
+                "items": items,
+                "batch_stats": stats_payload
+            }
 
             # Debug: log payload info
             print(f"[INVOKE_DEBUG] Payload items count: {len(items)}")
@@ -438,17 +441,6 @@ def lambda_handler(event, context):
                 Payload=json.dumps(payload),
             )
             print(f"[INVOKE_DEBUG] Store Lambda invoked: {response['StatusCode']}")
-
-        # Invoke Stats Lambda asynchronously
-        stats_function_name = os.environ.get("STATS_FUNCTION_NAME", "")
-        if stats_function_name:
-            lambda_client = boto3.client("lambda")
-            response = lambda_client.invoke(
-                FunctionName=stats_function_name,
-                InvocationType="Event",  # Asynchronous
-                Payload=json.dumps({"batch_stats": stats_payload}),
-            )
-            print(f"[INVOKE_DEBUG] Stats Lambda invoked: {response['StatusCode']}")
 
         return {
             "fetched": len(items),

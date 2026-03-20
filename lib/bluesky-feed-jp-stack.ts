@@ -172,6 +172,26 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     });
 
     // 6. Stats Lambda (Statistics aggregation - VPC外)
+    // 4. Aggregation Lambda (VPC, Hashtag aggregation)
+    const aggregationLambda = new lambda.Function(this, 'AggregationLambda', {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/aggregation')),
+      handler: 'handler.lambda_handler',
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 512,
+      logRetention: logs.RetentionDays.ONE_MONTH,
+      layers: [redisLayer],
+      vpc: vpc,
+      vpcSubnets: {
+        subnets: vpc.privateSubnets,
+      },
+      securityGroups: [lambdaSecurityGroup],
+      environment: {
+        VALKEY_ENDPOINT: env.VALKEY_ENDPOINT || 'localhost',
+        STATS_FUNCTION_NAME: '', // Will be set below
+      },
+    });
+
     const statsLambda = new lambda.Function(this, 'StatsLambda', {
       runtime: lambda.Runtime.PYTHON_3_11,
       code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/stats')),
@@ -186,13 +206,15 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       },
     });
 
-    // Set Store and Stats Lambda names in Ingest environment
+    // Set Lambda function names
     ingestLambda.addEnvironment('STORE_FUNCTION_NAME', storeLambda.functionName);
-    ingestLambda.addEnvironment('STATS_FUNCTION_NAME', statsLambda.functionName);
+    storeLambda.addEnvironment('AGGREGATION_FUNCTION_NAME', aggregationLambda.functionName);
+    aggregationLambda.addEnvironment('STATS_FUNCTION_NAME', statsLambda.functionName);
 
-    // Grant Ingest permission to invoke Store and Stats
+    // Grant permissions
     storeLambda.grantInvoke(ingestLambda);
-    statsLambda.grantInvoke(ingestLambda);
+    aggregationLambda.grantInvoke(storeLambda);
+    statsLambda.grantInvoke(aggregationLambda);
 
     // Grant Ingest Lambda permission to read and write to S3
     badwordBucket.grantReadWrite(ingestLambda);

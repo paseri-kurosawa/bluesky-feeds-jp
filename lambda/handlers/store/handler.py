@@ -2,6 +2,7 @@ import os
 import json
 import redis
 import time
+import boto3
 
 # Load configuration
 def load_config():
@@ -46,18 +47,17 @@ r = redis.Redis(
 def lambda_handler(event, context):
     """
     Store Lambda: Invoked asynchronously by Ingest Lambda.
-    Saves posts to Valkey ZSETs.
+    Saves posts to Valkey ZSETs and invokes AggregationLambda.
 
     Expected event:
     {
-        "items": [
-            {"uri": "at://...", "ts": 1234567890, "density_score": 2.5},
-            ...
-        ]
+        "items": [...],
+        "batch_stats": {...}
     }
     """
     try:
         items = event.get("items", [])
+        batch_stats = event.get("batch_stats", {})
         print(f"[DEBUG] Received items count: {len(items)}")
 
         if items and len(items) > 0:
@@ -141,6 +141,23 @@ def lambda_handler(event, context):
         dense_zcard = r.zcard("feed:dense:jp:v1")
         print(f"[STORE] Stored - Raw: {raw_stored}, Dense: {dense_stored}")
         print(f"[STORE] Final - Raw ZCARD: {raw_zcard}, Dense ZCARD: {dense_zcard}")
+
+        # Invoke AggregationLambda asynchronously
+        aggregation_function_name = os.environ.get("AGGREGATION_FUNCTION_NAME", "")
+        if aggregation_function_name and batch_stats:
+            try:
+                lambda_client = boto3.client("lambda")
+                aggregation_payload = {
+                    "batch_stats": batch_stats
+                }
+                response = lambda_client.invoke(
+                    FunctionName=aggregation_function_name,
+                    InvocationType="Event",  # Asynchronous
+                    Payload=json.dumps(aggregation_payload),
+                )
+                print(f"[STORE] AggregationLambda invoked: {response['StatusCode']}")
+            except Exception as e:
+                print(f"[STORE] Failed to invoke AggregationLambda: {str(e)}")
 
         return {
             "stored_raw": raw_stored,
