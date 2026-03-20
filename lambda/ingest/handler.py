@@ -103,6 +103,29 @@ def extract_hashtag_count(record):
     return hashtag_count
 
 
+def extract_hashtags(record):
+    """Extract actual hashtag names from record.facets"""
+    hashtags = []
+    if not record:
+        return hashtags
+
+    facets = getattr(record, "facets", None)
+    if not facets:
+        return hashtags
+
+    for facet in facets:
+        features = getattr(facet, "features", None) or []
+        for feature in features:
+            feature_type = getattr(feature, "$type", None)
+            # Hashtag facet type is "app.bsky.richtext.facet#tag"
+            if feature_type and "tag" in feature_type:
+                tag = getattr(feature, "tag", None)
+                if tag:
+                    hashtags.append(tag)
+
+    return hashtags
+
+
 def search_posts_with_retry(client, search_config, max_retries=3):
     """
     Search posts with exponential backoff retry logic.
@@ -222,8 +245,9 @@ def lambda_handler(event, context):
                 video = getattr(embed, "video", None)
                 has_images = bool(images or video)
 
-            # Extract hashtag count from facets
+            # Extract hashtag count and names from facets
             hashtag_count = extract_hashtag_count(record)
+            hashtags = extract_hashtags(record)
 
             # Calculate density score with attributes
             density_score, badword_count, matched_words = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
@@ -250,6 +274,7 @@ def lambda_handler(event, context):
                 "uri": uri,
                 "ts": ts,
                 "density_score": density_score,
+                "hashtags": hashtags,
             })
 
             # Collect text and base forms if it will go to Dense feed

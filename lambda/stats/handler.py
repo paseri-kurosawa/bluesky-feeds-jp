@@ -2,13 +2,110 @@ import json
 import os
 from datetime import datetime, timedelta
 import boto3
+import redis
 
 s3_client = boto3.client("s3")
 cloudwatch_client = boto3.client("cloudwatch")
 
+# Valkey connection
+VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
+try:
+    valkey_client = redis.Redis(
+        host=VALKEY_ENDPOINT,
+        port=6379,
+        ssl=True,
+        ssl_cert_reqs="required",
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+    )
+    valkey_client.ping()
+    print("[VALKEY] Connected successfully")
+except Exception as e:
+    print(f"[VALKEY] Connection failed: {str(e)}")
+    valkey_client = None
+
 def get_jst_now():
     """Get current time in JST (UTC+9)"""
     return datetime.utcnow() + timedelta(hours=9)
+
+
+def aggregate_hashtags_from_raw_feed(bucket):
+    """
+    Aggregate hashtags from feed:raw:jp:v1 in Valkey.
+    Returns top 10 hashtags with counts.
+    """
+    try:
+        if not valkey_client:
+            print("[HASHTAGS] Valkey client not available, skipping")
+            return None
+
+        # Get all posts from feed:raw:jp:v1
+        raw_posts = valkey_client.zrange("feed:raw:jp:v1", 0, -1)
+        print(f"[HASHTAGS] Retrieved {len(raw_posts)} posts from feed:raw:jp:v1")
+
+        if not raw_posts:
+            print("[HASHTAGS] No posts found in feed:raw:jp:v1")
+            return None
+
+        # Aggregate hashtags
+        hashtag_counts = {}
+        for post_json in raw_posts:
+            try:
+                post_data = json.loads(post_json)
+                hashtags = post_data.get("hashtags", [])
+                for tag in hashtags:
+                    hashtag_counts[tag] = hashtag_counts.get(tag, 0) + 1
+            except Exception as e:
+                print(f"[HASHTAGS] Error parsing post JSON: {str(e)}")
+                continue
+
+        # Sort by count and get top 10
+        sorted_hashtags = sorted(
+            hashtag_counts.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
+
+        top_hashtags = [
+            {"rank": i + 1, "tag": tag, "count": count}
+            for i, (tag, count) in enumerate(sorted_hashtags)
+        ]
+
+        print(f"[HASHTAGS] Aggregated {len(hashtag_counts)} unique hashtags, top 10 extracted")
+        for ht in top_hashtags:
+            print(f"  - #{ht['tag']}: {ht['count']}")
+
+        return top_hashtags
+
+    except Exception as e:
+        print(f"[HASHTAGS] Error aggregating hashtags: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def save_trends_current(bucket, top_hashtags):
+    """Save top hashtags to stats/trends/trends-current.json"""
+    try:
+        trends_data = {
+            "timestamp": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+            "top_hashtags": top_hashtags if top_hashtags else []
+        }
+
+        s3_key = "stats/trends/trends-current.json"
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=json.dumps(trends_data, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[TRENDS] Saved trends to {s3_key}")
+        return f"s3://{bucket}/{s3_key}"
+
+    except Exception as e:
+        print(f"[TRENDS] Error saving trends: {str(e)}")
+        return None
 
 
 def lambda_handler(event, context):
@@ -108,13 +205,23 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"[BACKFILL] Warning: Backfill check failed (non-critical): {str(e)}")
 
-        # Step 3: Create dashboard summary (完全に集計された日のみ含む)
+        # Step 3: Aggregate hashtags from raw feed
+        top_hashtags = aggregate_hashtags_from_raw_feed(bucket)
+        trends_url = None
+        if top_hashtags:
+            trends_url = save_trends_current(bucket, top_hashtags)
+            print(f"[STATS] Saved trends: {trends_url}")
+        else:
+            print("[STATS] No hashtags to save")
+
+        # Step 4: Create dashboard summary (完全に集計された日のみ含む)
         summary_url = create_dashboard_summary(bucket)
         print(f"[STATS] Created dashboard summary: {summary_url}")
 
         return {
             "status": "success",
             "batch_url": batch_url,
+            "trends_url": trends_url,
             "summary_url": summary_url
         }
 

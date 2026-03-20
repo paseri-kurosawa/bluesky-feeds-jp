@@ -30,7 +30,8 @@ def get_batch_spread_seconds():
     return int(config["scheduling"]["batch_spread_seconds"])
 
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
-MAX_ITEMS = 5000
+MAX_ITEMS_RAW = 5000
+MAX_ITEMS_DENSE = 2000
 
 r = redis.Redis(
     host=VALKEY_ENDPOINT,
@@ -108,7 +109,8 @@ def lambda_handler(event, context):
                 "uri": uri,
                 "ts": ts,
                 "visible_ts": visible_ts,
-                "density_score": density_score
+                "density_score": density_score,
+                "hashtags": item.get("hashtags", [])
             }, ensure_ascii=False)
 
             # Always store in raw feed
@@ -130,9 +132,9 @@ def lambda_handler(event, context):
                 except Exception as e:
                     print(f"[ERROR] Dense zadd failed for {uri}: {e}")
 
-        # Trim both feeds to MAX_ITEMS (keep latest)
-        r.zremrangebyrank("feed:raw:jp:v1", 0, -MAX_ITEMS - 1)
-        r.zremrangebyrank("feed:dense:jp:v1", 0, -MAX_ITEMS - 1)
+        # Trim both feeds to their respective limits (keep latest)
+        r.zremrangebyrank("feed:raw:jp:v1", 0, -MAX_ITEMS_RAW - 1)
+        r.zremrangebyrank("feed:dense:jp:v1", 0, -MAX_ITEMS_DENSE - 1)
 
         # Log final storage stats
         raw_zcard = r.zcard("feed:raw:jp:v1")

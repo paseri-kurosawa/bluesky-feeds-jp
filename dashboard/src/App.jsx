@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { LineChart } from './components/LineChart'
 import { LatestReport } from './components/LatestReport'
 import { DistributionChart } from './components/DistributionChart'
+import { TrendHashtags } from './components/TrendHashtags'
 import './App.css'
 
 export default function App() {
@@ -85,6 +86,10 @@ export default function App() {
             <section className="section distributions">
               <h2>Distribution & Stats</h2>
               <DistributionChart data={latestBatch} />
+            </section>
+
+            <section className="section trend-hashtags">
+              <TrendHashtags />
             </section>
 
             <section className="section time-series">
