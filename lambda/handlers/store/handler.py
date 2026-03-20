@@ -59,6 +59,8 @@ def lambda_handler(event, context):
         items = event.get("items", [])
         batch_stats = event.get("batch_stats", {})
         print(f"[DEBUG] Received items count: {len(items)}")
+        print(f"[DEBUG] batch_stats present: {bool(batch_stats)}")
+        print(f"[DEBUG] batch_stats keys: {list(batch_stats.keys()) if batch_stats else 'empty'}")
 
         if items and len(items) > 0:
             first_item = items[0]
