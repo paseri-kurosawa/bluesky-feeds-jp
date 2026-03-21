@@ -1,8 +1,8 @@
 """
 Density-based content quality scoring module using .ftz model.
 
-Simple, lightweight scoring:
-1. Token dispersion check (repetition detection)
+Scoring pipeline:
+1. Token dispersion check (vocabulary diversity: unique_tokens / total_tokens)
 2. Word vector norm extraction from .ftz model
 3. Attribute-based adjustments (reply, images, hashtags)
 """
@@ -502,7 +502,7 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
     Algorithm:
     - Step 0: Text-only short post check (text-only and ≤15 chars excluded)
     - Step 1: Tokenize text once (cached for reuse)
-    - Step 2: Check token dispersion (repetition detection)
+    - Step 2: Check token dispersion (vocabulary diversity threshold)
     - Step 3: Extract word vectors using .ftz model
     - Step 4: Calculate average vector norm
     - Step 5: Apply attribute adjustments (before sigmoid normalization)
@@ -533,7 +533,7 @@ def calculate_density_score(text: str, is_reply: bool = False, has_images: bool 
         tokens = tokenize_japanese(text)
         base_forms = extract_base_forms(text)
 
-        # Step 2: Token dispersion check (repetition detection)
+        # Step 2: Token dispersion check (vocabulary diversity threshold)
         config = load_config()
         disp_conf = config["scoring"]["token_dispersion"]
         disp_threshold = disp_conf["threshold"]
