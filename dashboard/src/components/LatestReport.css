@@ -101,3 +101,38 @@
   color: #a1a5ad;
   font-weight: 600;
 }
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .latest-report {
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .metrics-table {
+    font-size: 0.85rem;
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .metrics-table thead {
+    display: block;
+  }
+
+  .metrics-table tbody {
+    display: block;
+  }
+
+  .metrics-table th,
+  .metrics-table td {
+    padding: 0.5rem;
+  }
+
+  .report-section h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.6rem;
+  }
+}

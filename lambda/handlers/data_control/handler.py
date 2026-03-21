@@ -365,10 +365,15 @@ def aggregate_stats(batch_stats):
                 reverse=True
             )[:10]
 
-            top_hashtags = [
-                {"rank": i + 1, "tag": tag, "count": count}
-                for i, (tag, count) in enumerate(sorted_hashtags)
-            ]
+            # Assign ranks: same count = same rank
+            top_hashtags = []
+            rank = 1
+            prev_count = None
+            for i, (tag, count) in enumerate(sorted_hashtags):
+                if prev_count is not None and count < prev_count:
+                    rank = i + 1
+                top_hashtags.append({"rank": rank, "tag": tag, "count": count})
+                prev_count = count
 
             print(f"[STATS] Aggregated {len(hashtag_counts)} unique hashtags, top 10 extracted")
             for ht in top_hashtags:

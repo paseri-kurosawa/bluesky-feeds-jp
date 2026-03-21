@@ -81,7 +81,7 @@ export function TrendHashtags() {
         </thead>
         <tbody>
           {trends.top_hashtags.map((item, idx) => (
-            <tr key={idx} className={idx === 0 ? 'top-trend' : ''}>
+            <tr key={idx}>
               <td className="rank">{item.rank}</td>
               <td className="hashtag">#{item.tag}</td>
               <td className="count">{item.count}</td>
