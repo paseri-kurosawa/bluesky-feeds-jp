@@ -4,21 +4,34 @@ import './TrendHashtags.css'
 export function TrendHashtags() {
   const [trends, setTrends] = useState(null)
   const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const fetchTrends = async () => {
       try {
-        const trendsUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/trends/trends-current.json`
-        const response = await fetch(trendsUrl)
+        setLoading(true)
+        const dashboardUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/summary/dashboard.json`
+        const response = await fetch(dashboardUrl)
         if (!response.ok) {
-          throw new Error(`Failed to fetch trends: ${response.status}`)
+          throw new Error(`Failed to fetch dashboard data: ${response.status}`)
         }
-        const trendsData = await response.json()
-        setTrends(trendsData)
+        const dashboardData = await response.json()
+
+        // Extract top_hashtags from latest batch
+        if (dashboardData.latest && dashboardData.latest.top_hashtags) {
+          setTrends({
+            timestamp: dashboardData.latest.timestamp,
+            top_hashtags: dashboardData.latest.top_hashtags
+          })
+        } else {
+          setTrends(null)
+        }
         setError(null)
       } catch (err) {
         console.error('Error fetching trends:', err)
         setError(err.message)
+      } finally {
+        setLoading(false)
       }
     }
 
@@ -26,6 +39,15 @@ export function TrendHashtags() {
     const interval = setInterval(fetchTrends, 60000) // Poll every 60 seconds
     return () => clearInterval(interval)
   }, [])
+
+  if (loading) {
+    return (
+      <div className="trend-hashtags">
+        <h2>Trend Hashtags</h2>
+        <p>Loading...</p>
+      </div>
+    )
+  }
 
   if (error) {
     return (

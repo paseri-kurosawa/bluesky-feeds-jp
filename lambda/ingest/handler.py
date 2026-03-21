@@ -95,9 +95,10 @@ def extract_hashtag_count(record):
         # Facet has features list; check for hashtag type
         features = getattr(facet, "features", None) or []
         for feature in features:
-            feature_type = getattr(feature, "$type", None)
+            # Use py_type instead of $type (atproto uses py_type)
+            py_type = getattr(feature, "py_type", None)
             # Hashtag facet type is "app.bsky.richtext.facet#tag"
-            if feature_type and "tag" in feature_type:
+            if py_type and "tag" in py_type:
                 hashtag_count += 1
 
     return hashtag_count
@@ -116,9 +117,11 @@ def extract_hashtags(record):
     for facet in facets:
         features = getattr(facet, "features", None) or []
         for feature in features:
-            feature_type = getattr(feature, "$type", None)
-            # Hashtag facet type is "app.bsky.richtext.facet#tag"
-            if feature_type and "tag" in feature_type:
+            # Use py_type instead of $type (atproto uses py_type)
+            py_type = getattr(feature, "py_type", None)
+
+            # Check if this is a hashtag facet
+            if py_type and "tag" in py_type:
                 tag = getattr(feature, "tag", None)
                 if tag:
                     hashtags.append(tag)

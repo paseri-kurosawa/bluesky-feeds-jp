@@ -68,6 +68,12 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     valkeyCache.addDependency(subnetGroup);
 
+    // === S3 VPC Endpoint (Gateway type) ===
+    const s3Endpoint = vpc.addGatewayEndpoint('S3Endpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+      subnets: [{ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }],
+    });
+
     // Get Valkey endpoint (placeholder - will be filled after creation)
     const valkeyEndpoint = env.VALKEY_ENDPOINT || 'bluesky-feed-cache.serverless.apne1.cache.amazonaws.com';
 
@@ -155,12 +161,12 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       },
     });
 
-    // 5. Store Lambda (VPC)
-    const storeLambda = new lambda.Function(this, 'StoreLambda', {
+    // 5. DataControl Lambda (VPC) - Store posts to Valkey + aggregate hashtags + save stats to S3
+    const dataControlLambda = new lambda.Function(this, 'DataControlLambda', {
       runtime: lambda.Runtime.PYTHON_3_11,
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/handlers/store')),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/handlers/data_control')),
       handler: 'handler.lambda_handler',
-      timeout: cdk.Duration.seconds(60),
+      timeout: cdk.Duration.seconds(120),
       memorySize: 512,
       logRetention: logs.RetentionDays.ONE_WEEK,
       layers: [redisLayer],
@@ -168,73 +174,24 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       securityGroups: [lambdaSecurityGroup],
       environment: {
         VALKEY_ENDPOINT: valkeyEndpoint,
-      },
-    });
-
-    // 6. Stats Lambda (Statistics aggregation - VPC外)
-    // 4. Aggregation Lambda (VPC, Hashtag aggregation)
-    const aggregationLambda = new lambda.Function(this, 'AggregationLambda', {
-      runtime: lambda.Runtime.PYTHON_3_11,
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/aggregation')),
-      handler: 'handler.lambda_handler',
-      timeout: cdk.Duration.seconds(60),
-      memorySize: 512,
-      logRetention: logs.RetentionDays.ONE_MONTH,
-      layers: [redisLayer],
-      vpc: vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-      },
-      securityGroups: [lambdaSecurityGroup],
-      environment: {
-        VALKEY_ENDPOINT: env.VALKEY_ENDPOINT || 'localhost',
-        STATS_FUNCTION_NAME: '', // Will be set below
-      },
-    });
-
-    const statsLambda = new lambda.Function(this, 'StatsLambda', {
-      runtime: lambda.Runtime.PYTHON_3_11,
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/stats')),
-      handler: 'handler.lambda_handler',
-      timeout: cdk.Duration.seconds(60),
-      memorySize: 512,
-      logRetention: logs.RetentionDays.ONE_WEEK,
-      layers: [redisLayer],
-      environment: {
         STATISTICS_BUCKET: dashboardBucket.bucketName,
-        VALKEY_ENDPOINT: env.VALKEY_ENDPOINT || 'localhost',
       },
     });
 
     // Set Lambda function names
-    ingestLambda.addEnvironment('STORE_FUNCTION_NAME', storeLambda.functionName);
-    storeLambda.addEnvironment('AGGREGATION_FUNCTION_NAME', aggregationLambda.functionName);
-    aggregationLambda.addEnvironment('STATS_FUNCTION_NAME', statsLambda.functionName);
+    ingestLambda.addEnvironment('STORE_FUNCTION_NAME', dataControlLambda.functionName);
 
     // Grant permissions
-    storeLambda.grantInvoke(ingestLambda);
-    aggregationLambda.grantInvoke(storeLambda);
-    statsLambda.grantInvoke(aggregationLambda);
+    dataControlLambda.grantInvoke(ingestLambda);
 
     // Grant Ingest Lambda permission to read and write to S3
     badwordBucket.grantReadWrite(ingestLambda);
     dashboardBucket.grantWrite(ingestLambda);
     dashboardBucket.grantRead(ingestLambda); // For listing files to update index
 
-    // Grant Stats Lambda permission to read and write to S3
-    dashboardBucket.grantReadWrite(statsLambda);
+    // Grant DataControl Lambda permission to write stats to S3
+    dashboardBucket.grantReadWrite(dataControlLambda);
 
-    // Grant Stats Lambda permission to read CloudWatch Metrics for GetFeed tracking
-    statsLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: [
-        'cloudwatch:GetMetricStatistics',
-        'cloudwatch:GetMetricData'
-      ],
-      resources: ['*'], // CloudWatch Metrics API requires wildcard
-    }));
-
-    // Pass GetFeed Lambda function name to Stats Lambda for metrics query
-    statsLambda.addEnvironment('GETFEED_FUNCTION_NAME', getFeedLambda.functionName);
 
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {

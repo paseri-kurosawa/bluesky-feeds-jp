@@ -28,15 +28,18 @@ def aggregate_hashtags_from_raw_feed():
     """
     Aggregate hashtags from feed:raw:jp:v1 in Valkey.
     Returns top 10 hashtags with counts.
+
+    TEMPORARY TEST: Limit to latest 500 posts to verify timeout issue resolution.
+    If this fixes timeout, need permanent optimization strategy discussion.
     """
     try:
         if not valkey_client:
             print("[HASHTAGS] Valkey client not available")
             return None
 
-        # Get all posts from feed:raw:jp:v1
-        raw_posts = valkey_client.zrange("feed:raw:jp:v1", 0, -1)
-        print(f"[HASHTAGS] Retrieved {len(raw_posts)} posts from feed:raw:jp:v1")
+        # TEMPORARY: Get latest 500 posts only (not all 5000) - TEST ONLY
+        raw_posts = valkey_client.zrevrange("feed:raw:jp:v1", 0, 499)
+        print(f"[HASHTAGS] Retrieved {len(raw_posts)} posts (latest 500 - TEST LIMIT) from feed:raw:jp:v1")
 
         if not raw_posts:
             print("[HASHTAGS] No posts found in feed:raw:jp:v1")
