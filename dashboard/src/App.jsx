@@ -71,17 +71,17 @@ export default function App() {
       <main className="dashboard-grid">
         {latestBatch && (
           <>
-            <>
+            <section className="section latest-report-section">
               <div className="latest-report-header">
                 <h2 className="latest-report-title">Latest Report</h2>
                 <span className="latest-report-timestamp">
                   Executed: {latestBatch.execution_time || 'N/A'}
                 </span>
               </div>
-              <section className="section latest-report">
+              <div className="latest-report">
                 <LatestReport data={latestBatch} showTitle={false} />
-              </section>
-            </>
+              </div>
+            </section>
 
             <section className="section distributions">
               <h2>Distribution & Stats</h2>

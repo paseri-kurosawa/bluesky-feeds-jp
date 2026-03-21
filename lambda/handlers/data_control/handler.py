@@ -338,48 +338,64 @@ def aggregate_stats(batch_stats):
         print(f"[STATS] Retrieved {len(raw_posts)} posts (all) from feed:raw:jp:v1")
 
         if raw_posts:
-            # Aggregate hashtags
-            hashtag_counts = {}
-            sample_posts_with_tags = 0
-            for idx, post_json in enumerate(raw_posts):
+            # Helper function to aggregate hashtags
+            def compute_hashtag_trends(posts, label="ALL"):
+                hashtag_counts = {}
+                for post_json in posts:
+                    try:
+                        post_data = json.loads(post_json)
+                        hashtags = post_data.get("hashtags", [])
+                        for tag in hashtags:
+                            normalized_tag = unicodedata.normalize("NFC", tag).lower()
+                            hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
+                    except Exception as e:
+                        print(f"[STATS] Error parsing post JSON: {str(e)}")
+                        continue
+
+                # Sort by count and get top 10
+                sorted_hashtags = sorted(
+                    hashtag_counts.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:10]
+
+                # Assign ranks: same count = same rank
+                trends = []
+                rank = 1
+                prev_count = None
+                for i, (tag, count) in enumerate(sorted_hashtags):
+                    if prev_count is not None and count < prev_count:
+                        rank = i + 1
+                    trends.append({"rank": rank, "tag": tag, "count": count})
+                    prev_count = count
+
+                print(f"[STATS] Aggregated {len(hashtag_counts)} unique hashtags ({label}), top 10 extracted")
+                for ht in trends:
+                    print(f"  - #{ht['tag']}: {ht['count']} ({label})")
+                return trends
+
+            # Filter posts from last 1 hour (3600 seconds)
+            now = int(time.time())
+            one_hour_ago = now - 3600
+            recent_posts = []
+            for post_json in raw_posts:
                 try:
                     post_data = json.loads(post_json)
-                    hashtags = post_data.get("hashtags", [])
-                    if hashtags and idx < 5:  # Log first 5 posts with hashtags
-                        print(f"[STATS] Sample post {idx}: hashtags={hashtags}")
-                        sample_posts_with_tags += 1
-                    for tag in hashtags:
-                        # Normalize: Unicode NFC + lowercase for case-insensitive grouping
-                        normalized_tag = unicodedata.normalize("NFC", tag).lower()
-                        hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
+                    post_ts = post_data.get("ts", 0)
+                    if post_ts >= one_hour_ago:
+                        recent_posts.append(post_json)
                 except Exception as e:
-                    print(f"[STATS] Error parsing post JSON: {str(e)}")
                     continue
 
-            print(f"[STATS] Sample posts with tags: {sample_posts_with_tags} / {len(raw_posts)}")
+            print(f"[STATS] Filtered {len(recent_posts)} posts from last 1 hour")
 
-            # Sort by count and get top 10
-            sorted_hashtags = sorted(
-                hashtag_counts.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:10]
-
-            # Assign ranks: same count = same rank
-            top_hashtags = []
-            rank = 1
-            prev_count = None
-            for i, (tag, count) in enumerate(sorted_hashtags):
-                if prev_count is not None and count < prev_count:
-                    rank = i + 1
-                top_hashtags.append({"rank": rank, "tag": tag, "count": count})
-                prev_count = count
-
-            print(f"[STATS] Aggregated {len(hashtag_counts)} unique hashtags, top 10 extracted")
-            for ht in top_hashtags:
-                print(f"  - #{ht['tag']}: {ht['count']}")
+            # Compute trends for both ALL and 1H
+            top_hashtags = compute_hashtag_trends(raw_posts, "ALL")
+            top_hashtags_1h = compute_hashtag_trends(recent_posts, "1H")
         else:
             print("[STATS] No posts found in feed:raw:jp:v1")
+            top_hashtags = []
+            top_hashtags_1h = []
 
     except Exception as e:
         print(f"[STATS] Error aggregating: {str(e)}")
@@ -390,7 +406,8 @@ def aggregate_stats(batch_stats):
     # Enrich batch_stats with top_hashtags
     enriched_stats = {
         **batch_stats,
-        "top_hashtags": top_hashtags
+        "top_hashtags": top_hashtags,
+        "top_hashtags_1h": top_hashtags_1h
     }
 
     return top_hashtags, enriched_stats
