@@ -50,8 +50,6 @@ export default function App() {
 
   useEffect(() => {
     fetchStats()
-    const interval = setInterval(fetchStats, 60000) // Poll every 60 seconds
-    return () => clearInterval(interval)
   }, [])
 
   if (loading && !latestBatch) {
@@ -89,7 +87,7 @@ export default function App() {
             </section>
 
             <section className="section trend-hashtags">
-              <TrendHashtags />
+              <TrendHashtags data={latestBatch} />
             </section>
 
             <section className="section time-series">
