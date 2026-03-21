@@ -1,14 +1,39 @@
 .trend-hashtags {
   display: flex;
-  gap: 2rem;
+  gap: 1rem;
   width: 100%;
   flex-direction: column;
+}
+
+.trend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  width: 100%;
+  border-bottom: 2px solid #667eea;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.trend-header h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  color: #333;
+  border-bottom: none !important;
+  padding-bottom: 0 !important;
+  margin-bottom: 0;
+}
+
+.trend-header .timestamp {
+  font-size: 0.9rem;
+  color: #666;
 }
 
 .trend-container {
   display: flex;
   gap: 2rem;
   width: 100%;
+  margin-top: 0;
 }
 
 .trend-section-1h,
@@ -31,18 +56,6 @@
   padding: 1rem;
 }
 
-.trend-hashtags h2 {
-  margin-top: 0;
-  color: #333;
-  font-size: 1.4rem;
-  margin-bottom: 0.5rem;
-}
-
-.timestamp {
-  font-size: 0.85rem;
-  color: #666;
-  margin-bottom: 1rem;
-}
 
 .trend-table {
   width: 100%;

@@ -39,8 +39,10 @@ export function TrendHashtags({ data }) {
 
   return (
     <div className="trend-hashtags">
-      <h2>Trend Hashtags (Top 10)</h2>
-      <div className="timestamp">Updated: {trends.timestamp}</div>
+      <div className="trend-header">
+        <h2>Trend Hashtags (Top 10)</h2>
+        <span className="timestamp">Updated: {trends.timestamp}</span>
+      </div>
       <div className="trend-container">
         <div className="trend-section-1h">
           <h3>Trend Hashtags 1H</h3>
