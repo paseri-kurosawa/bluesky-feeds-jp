@@ -29,7 +29,7 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 .metrics-table thead {
@@ -111,24 +111,20 @@
 }
 
 @media (max-width: 768px) {
-  .metrics-table {
-    font-size: 0.85rem;
-    display: block;
+  .report-section {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
 
-  .metrics-table thead {
-    display: block;
-  }
-
-  .metrics-table tbody {
-    display: block;
+  .metrics-table {
+    font-size: 0.85rem;
+    min-width: 500px;
   }
 
   .metrics-table th,
   .metrics-table td {
     padding: 0.5rem;
+    white-space: nowrap;
   }
 
   .report-section h3 {
