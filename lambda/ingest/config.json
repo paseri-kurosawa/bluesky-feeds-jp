@@ -54,29 +54,13 @@
       "hashtags": {
         "enabled": true,
         "description": "ハッシュタグ数に基づく段階的調整（record.facets から抽出）",
-        "rules": [
-          {
-            "min": 1,
-            "max": 2,
-            "adjustment": 1.5,
-            "operation": "add",
-            "description": "ハッシュタグ1-2個は1.5点加点"
-          },
-          {
-            "min": 3,
-            "max": 4,
-            "adjustment": 0.0,
-            "operation": "add",
-            "description": "ハッシュタグ3-4個は変動なし"
-          },
-          {
-            "min": 5,
-            "max": null,
-            "adjustment": 1.5,
-            "operation": "subtract",
-            "description": "ハッシュタグ5個以上は1.5点減点"
-          }
-        ]
+        "max_adjustment": 1.5,
+        "max_adjustment_note": "X = 最大加点。1-4個のハッシュタグに対して段階的に減衰して加算",
+        "decay_range": 3,
+        "decay_range_note": "Y = 減衰対象範囲。4個（Y+1）までで0になる",
+        "formula": "adjustment = X * (1 - (hashtag_count - 1) / Y)   for hashtag_count in [1, Y+1]",
+        "formula_example_1_5": "X=1.5, Y=3の場合: 1個=1.5, 2個=1.0, 3個=0.5, 4個=0",
+        "formula_example_2_0": "X=2.0, Y=3の場合: 1個=2.0, 2個=1.333, 3個=0.667, 4個=0"
       },
       "badwords": {
         "enabled": true,

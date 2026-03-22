@@ -201,6 +201,7 @@ def lambda_handler(event, context):
             "invalid_fields": 0,
             "moderation_labels": 0,
             "non_japanese": 0,
+            "spam_hashtags": 0,
         }
         badword_stats = {
             "total_posts_with_badwords": 0,
@@ -252,6 +253,17 @@ def lambda_handler(event, context):
             hashtag_count = extract_hashtag_count(record)
             hashtags = extract_hashtags(record)
 
+            # Skip posts with 5+ hashtags (spam detection)
+            # Rationale: Posts with 5+ hashtags are considered spam/low-quality
+            # - Excessive hashtags indicate artificial reach-seeking behavior
+            # - Natural Japanese posts typically use 1-3 hashtags
+            # - 5+ hashtags = search optimization + low semantic value
+            # - Incompatible with "calm and safe" feed goal
+            if hashtag_count >= 5:
+                print(f"[FILTER] Spam (hashtags >= 5): {uri} ({hashtag_count} hashtags)")
+                skipped_by_reason["spam_hashtags"] += 1
+                continue
+
             # Calculate density score with attributes
             density_score, badword_count, matched_words = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
 
@@ -300,6 +312,7 @@ def lambda_handler(event, context):
         print(f"  - Invalid fields: {skipped_by_reason['invalid_fields']}")
         print(f"  - Moderation labels: {skipped_by_reason['moderation_labels']}")
         print(f"  - Non-Japanese: {skipped_by_reason['non_japanese']}")
+        print(f"  - Spam hashtags (5+): {skipped_by_reason['spam_hashtags']}")
         print(f"  - Passed filters: {len(items)}")
 
         # Badword statistics
@@ -397,11 +410,13 @@ def lambda_handler(event, context):
                 "invalid_fields": skipped_by_reason['invalid_fields'],
                 "moderation_labels": skipped_by_reason['moderation_labels'],
                 "non_japanese": skipped_by_reason['non_japanese'],
+                "spam_hashtags": skipped_by_reason['spam_hashtags'],
                 "passed_filters": passed_filters,
                 "rates": {
                     "invalid_fields_rate": round(skipped_by_reason['invalid_fields'] / total_fetched * 100, 1) if total_fetched else 0,
                     "moderation_labels_rate": round(skipped_by_reason['moderation_labels'] / total_fetched * 100, 1) if total_fetched else 0,
                     "non_japanese_rate": round(skipped_by_reason['non_japanese'] / total_fetched * 100, 1) if total_fetched else 0,
+                    "spam_hashtags_rate": round(skipped_by_reason['spam_hashtags'] / total_fetched * 100, 1) if total_fetched else 0,
                     "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
                 }
             },

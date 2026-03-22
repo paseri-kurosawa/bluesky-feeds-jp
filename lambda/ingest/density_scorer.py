@@ -444,36 +444,21 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
             adjusted_norm += img_conf["adjustment"]
             adjustments.append(f"images:+{img_conf['adjustment']}")
 
-    # Hashtags adjustment (rule-based)
+    # Hashtags adjustment (decay-based formula)
     if hashtag_count > 0 and attr_config["hashtags"]["enabled"]:
-        for rule in attr_config["hashtags"]["rules"]:
-            rule_min = rule["min"]
-            rule_max = rule["max"]
+        max_adj = attr_config["hashtags"].get("max_adjustment", 1.5)
+        decay_range = attr_config["hashtags"].get("decay_range", 3)
 
-            # Check if hashtag_count matches this rule
-            if rule_max is None:
-                # No upper limit
-                if hashtag_count >= rule_min:
-                    if rule["operation"] == "add":
-                        adjusted_norm += rule["adjustment"]
-                        if rule["adjustment"] != 0:
-                            adjustments.append(f"hashtags({hashtag_count}):+{rule['adjustment']}")
-                        else:
-                            adjustments.append(f"hashtags({hashtag_count}):±0.0")
-                    elif rule["operation"] == "subtract":
-                        adjusted_norm -= rule["adjustment"]
-                        adjustments.append(f"hashtags({hashtag_count}):−{rule['adjustment']}")
-                    break
-            else:
-                # Both min and max specified
-                if rule_min <= hashtag_count <= rule_max:
-                    if rule["operation"] == "add":
-                        adjusted_norm += rule["adjustment"]
-                        if rule["adjustment"] != 0:
-                            adjustments.append(f"hashtags({hashtag_count}):+{rule['adjustment']}")
-                        else:
-                            adjustments.append(f"hashtags({hashtag_count}):±0.0")
-                    break
+        # Formula: adjustment = X * (1 - (Y-1) / decay_range)
+        # where X = max_adjustment, Y = hashtag_count, for Y in [1, decay_range+1]
+        if hashtag_count <= decay_range + 1:
+            hashtag_adjustment = max_adj * (1.0 - (hashtag_count - 1) / decay_range)
+            hashtag_adjustment = max(0.0, hashtag_adjustment)  # Clamp to >= 0
+            adjusted_norm += hashtag_adjustment
+            adjustments.append(f"hashtags({hashtag_count}):+{hashtag_adjustment:.4f}")
+        else:
+            # hashtag_count > decay_range + 1: no adjustment (already filtered)
+            adjustments.append(f"hashtags({hashtag_count}):filtered")
 
     # Step 4.4: Badword adjustment（Hashtags の直後）
     # 【仕様】

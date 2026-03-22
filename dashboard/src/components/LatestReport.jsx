@@ -43,6 +43,11 @@ export function LatestReport({ data, showTitle = false }) {
               <td className="number">{ps.non_japanese}</td>
               <td className="percentage">{ps.rates.non_japanese_rate}%</td>
             </tr>
+            <tr>
+              <td>Spam Hashtags</td>
+              <td className="number">{ps.spam_hashtags}</td>
+              <td className="percentage">{ps.rates.spam_hashtags_rate}%</td>
+            </tr>
             <tr className="passed">
               <td><strong>Passed Filters</strong></td>
               <td className="number"><strong>{ps.passed_filters}</strong></td>
