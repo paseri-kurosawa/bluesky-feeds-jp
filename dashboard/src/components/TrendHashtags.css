@@ -1,6 +1,6 @@
 .trend-hashtags {
   display: flex;
-  gap: 1rem;
+  gap: 0.5rem;
   width: 100%;
   flex-direction: column;
 }
@@ -8,11 +8,11 @@
 .trend-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   width: 100%;
   border-bottom: 2px solid #667eea;
-  padding-bottom: 0.5rem;
-  margin-bottom: 1.5rem;
+  padding-bottom: 0;
+  margin-bottom: 0.5rem;
 }
 
 .trend-header h2 {
@@ -22,6 +22,7 @@
   border-bottom: none !important;
   padding-bottom: 0 !important;
   margin-bottom: 0;
+  line-height: 1;
 }
 
 .trend-header .timestamp {
