@@ -27,10 +27,10 @@
     },
     "density_threshold": {
       "description": "Dense Feed の判定基準（Sigmoid 正規化後）",
-      "threshold": 0.65,
-      "threshold_note": "score < 0.65 の場合は Raw Feed のみに格納。score >= 0.65 の場合は Raw Feed と Dense Feed の両方に格納。",
-      "current_dense_rate": 0.352,
-      "rate_note": "現在の Dense Feed 率（2026-03-12 実測）: 35.2%（91件中32件）"
+      "threshold": 0.675,
+      "threshold_note": "score < 0.675 の場合は Raw Feed のみに格納。score >= 0.675 の場合は Raw Feed と Dense Feed の両方に格納。",
+      "current_dense_rate": null,
+      "rate_note": "監視中。0.675で運用。定性的に観察予定"
     },
     "token_dispersion": {
       "description": "トークン分散度による繰り返し検出（高いほど自然な言語）",
