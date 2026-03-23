@@ -24,11 +24,30 @@ def get_config():
         _config = load_config()
     return _config
 
-# Environment variables (credentials only)
-BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
-BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
+# Environment variables
+BSKY_SECRET_NAME = os.environ.get("BSKY_SECRET_NAME", "bluesky-feed-jp/credentials")
 STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
+
+# Cached credentials (loaded at runtime from Secrets Manager)
+_bsky_credentials = None
+
+def get_bsky_credentials():
+    """Load Bluesky credentials from AWS Secrets Manager"""
+    global _bsky_credentials
+    if _bsky_credentials is None:
+        client = boto3.client("secretsmanager")
+        try:
+            response = client.get_secret_value(SecretId=BSKY_SECRET_NAME)
+            secret = json.loads(response["SecretString"])
+            _bsky_credentials = {
+                "handle": secret.get("handle", ""),
+                "appPassword": secret.get("appPassword", ""),
+            }
+        except Exception as e:
+            print(f"[ERROR] Failed to retrieve Bluesky credentials from Secrets Manager: {e}")
+            raise
+    return _bsky_credentials
 
 # Density threshold loaded from config.json
 def get_density_threshold():
@@ -182,10 +201,15 @@ def lambda_handler(event, context):
     try:
         from atproto import Client
 
+        # Get credentials from Secrets Manager
+        credentials = get_bsky_credentials()
+        bsky_handle = credentials["handle"]
+        bsky_app_password = credentials["appPassword"]
+
         # Authentication
         print("Authenticating with Bluesky...")
         client = Client()
-        client.login(BSKY_HANDLE, BSKY_APP_PASSWORD)
+        client.login(bsky_handle, bsky_app_password)
 
         # Search posts with retry logic
         config = get_config()

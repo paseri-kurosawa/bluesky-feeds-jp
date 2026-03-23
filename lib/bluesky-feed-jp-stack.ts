@@ -10,6 +10,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secrets from 'aws-cdk-lib/aws-secretsmanager';
 import * as path from 'path';
 
 export class BlueskyFeedJpStack extends cdk.Stack {
@@ -17,6 +18,16 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     super(scope, id, props);
 
     const env = process.env;
+
+    // === AWS Secrets Manager - Store Bluesky credentials ===
+    const bskySecret = new secrets.Secret(this, 'BlueskyCredentials', {
+      secretName: 'bluesky-feed-jp/credentials',
+      description: 'Bluesky account credentials for feed ingestion',
+      secretObjectValue: {
+        handle: cdk.SecretValue.unsafePlaintext(env.BSKY_HANDLE || ''),
+        appPassword: cdk.SecretValue.unsafePlaintext(env.BSKY_APP_PASSWORD || ''),
+      },
+    });
 
     // === VPC Configuration ===
     const vpc = new ec2.Vpc(this, 'BlueskyFeedVpc', {
@@ -153,8 +164,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       memorySize: 3008,
       logRetention: logs.RetentionDays.TWO_WEEKS,
       environment: {
-        BSKY_HANDLE: env.BSKY_HANDLE || '',
-        BSKY_APP_PASSWORD: env.BSKY_APP_PASSWORD || '',
+        BSKY_SECRET_NAME: bskySecret.secretName,
         S3_BUCKET: badwordBucket.bucketName,
         STATISTICS_BUCKET: dashboardBucket.bucketName,
         STORE_FUNCTION_NAME: '', // Will be set after creation
@@ -183,6 +193,9 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     // Grant permissions
     dataControlLambda.grantInvoke(ingestLambda);
+
+    // Grant Ingest Lambda permission to read Bluesky credentials from Secrets Manager
+    bskySecret.grantRead(ingestLambda);
 
     // Grant Ingest Lambda permission to read and write to S3
     badwordBucket.grantReadWrite(ingestLambda);
