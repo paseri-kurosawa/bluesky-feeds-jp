@@ -44,8 +44,6 @@ def get_bsky_credentials():
                 "handle": secret.get("handle", ""),
                 "appPassword": secret.get("appPassword", ""),
             }
-            print(f"[DEBUG_CREDS] Loaded handle: {_bsky_credentials['handle']}")
-            print(f"[DEBUG_CREDS] Loaded password length: {len(_bsky_credentials['appPassword'])}")
         except Exception as e:
             print(f"[ERROR] Failed to retrieve Bluesky credentials from Secrets Manager: {e}")
             raise
@@ -209,8 +207,6 @@ def lambda_handler(event, context):
         bsky_app_password = credentials["appPassword"]
 
         # Authentication
-        print(f"[DEBUG] Using handle: {bsky_handle}")
-        print(f"[DEBUG] Using password: {bsky_app_password}")
         print("Authenticating with Bluesky...")
         client = Client()
         client.login(bsky_handle, bsky_app_password)
