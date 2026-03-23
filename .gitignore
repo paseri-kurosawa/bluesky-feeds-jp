@@ -24,3 +24,7 @@ cdk.context.json
 
 # Script work directory
 script/work/
+
+# Documentation files (except README.md)
+*.md
+!README.md
