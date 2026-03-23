@@ -19,15 +19,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     const env = process.env;
 
-    // === AWS Secrets Manager - Store Bluesky credentials ===
-    const bskySecret = new secrets.Secret(this, 'BlueskyCredentials', {
-      secretName: 'bluesky-feed-jp/credentials',
-      description: 'Bluesky account credentials for feed ingestion',
-      secretObjectValue: {
-        handle: cdk.SecretValue.unsafePlaintext(env.BSKY_HANDLE || ''),
-        appPassword: cdk.SecretValue.unsafePlaintext(env.BSKY_APP_PASSWORD || ''),
-      },
-    });
+    // === AWS Secrets Manager - Reference existing Bluesky credentials ===
+    const bskySecret = secrets.Secret.fromSecretNameV2(this, 'BlueskyCredentials', 'bluesky-feed-jp/credentials');
 
     // === VPC Configuration ===
     const vpc = new ec2.Vpc(this, 'BlueskyFeedVpc', {
