@@ -211,8 +211,10 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       apiName: 'BlueskyFeedApi',
       description: 'HTTP API for Bluesky feed generator',
       corsPreflight: {
-        allowOrigins: ['*'],
+        // Restrict to Bluesky's domain only (API used by Bluesky backend)
+        allowOrigins: ['https://bsky.app'],
         allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.POST],
+        allowCredentials: false,
       },
     });
 
