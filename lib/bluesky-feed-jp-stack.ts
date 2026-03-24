@@ -198,6 +198,13 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     // Grant DataControl Lambda permission to write stats to S3
     dashboardBucket.grantReadWrite(dataControlLambda);
 
+    // Grant DataControl Lambda permission to read CloudWatch Metrics (for GetFeed Calls)
+    dataControlLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['cloudwatch:GetMetricStatistics'],
+      resources: ['*'],
+    }));
+
 
     // === HTTP API Gateway ===
     const httpApi = new apigatewayv2.HttpApi(this, 'BlueskyFeedApi', {
