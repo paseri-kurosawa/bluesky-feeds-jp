@@ -12,7 +12,7 @@ export function TrendHashtags({ data }) {
 
   const trends = {
     timestamp: data.timestamp,
-    top_hashtags: data.top_hashtags || [],
+    stable_hashtags: data.stable_hashtags || [],
     top_hashtags_1h: data.top_hashtags_1h || []
   }
 
@@ -53,11 +53,11 @@ export function TrendHashtags({ data }) {
           )}
         </div>
         <div className="trend-section-all">
-          <h3>Trend Hashtags ALL</h3>
-          {trends.top_hashtags && trends.top_hashtags.length > 0 ? (
-            renderTable(trends.top_hashtags)
+          <h3>Stable Hashtags</h3>
+          {trends.stable_hashtags && trends.stable_hashtags.length > 0 ? (
+            renderTable(trends.stable_hashtags)
           ) : (
-            <p className="no-data">No trend data available</p>
+            <p className="no-data">No stable hashtag data available</p>
           )}
         </div>
       </div>

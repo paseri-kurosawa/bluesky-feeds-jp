@@ -2,6 +2,7 @@ import os
 import json
 import time
 import boto3
+import unicodedata
 from botocore.exceptions import ClientError
 from datetime import datetime, timezone, timedelta
 from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms
@@ -420,6 +421,15 @@ def lambda_handler(event, context):
         passed_filters = len(items)
         dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
 
+        # Extract and count hashtags from Raw feed (items)
+        # Normalize tags (Unicode NFC + lowercase) to absorb variation
+        hashtag_counts = {}
+        for item in items:
+            hashtags = item.get("hashtags", [])
+            for tag in hashtags:
+                normalized_tag = unicodedata.normalize("NFC", tag).lower()
+                hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
+
         # Badword metrics
         badword_hit_rate = (badword_stats['total_posts_with_badwords'] / passed_filters * 100) if passed_filters else 0
         avg_matches = (badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
@@ -501,7 +511,8 @@ def lambda_handler(event, context):
                 "batch_stats": stats_payload,
                 "dense_texts": dense_texts,
                 "dense_base_forms": dense_base_forms,
-                "getfeed_stats": getfeed_stats
+                "getfeed_stats": getfeed_stats,
+                "hashtags": hashtag_counts
             }
 
             response = lambda_client.invoke(
