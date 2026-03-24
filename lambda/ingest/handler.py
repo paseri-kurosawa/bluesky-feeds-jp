@@ -2,11 +2,60 @@ import os
 import json
 import time
 import boto3
+from botocore.exceptions import ClientError
 from datetime import datetime, timezone, timedelta
 from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms
 
 # Japan Standard Time (UTC+9)
 JST = timezone(timedelta(hours=9))
+
+# AWS Clients
+cloudwatch_client = boto3.client("cloudwatch")
+
+# CloudWatch query function
+def get_getfeed_invocations_for_date(target_date):
+    """
+    Get total GetFeedLambda invocations for a specific date from CloudWatch.
+
+    Args:
+        target_date: Date string in format YYYY-MM-DD
+
+    Returns:
+        Total invocation count for the date (0 if query fails)
+    """
+    try:
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+        start_time = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        # Convert to UTC (JST is UTC+9)
+        start_time_utc = start_time - timedelta(hours=9)
+        end_time_utc = end_time - timedelta(hours=9)
+
+        response = cloudwatch_client.get_metric_statistics(
+            Namespace='AWS/Lambda',
+            MetricName='Invocations',
+            Dimensions=[
+                {
+                    'Name': 'FunctionName',
+                    'Value': 'BlueskyFeedJpStack-GetFeedLambda76B14ED4-DfIhJgHN7YXZ'
+                }
+            ],
+            StartTime=start_time_utc,
+            EndTime=end_time_utc,
+            Period=3600,
+            Statistics=['Sum']
+        )
+
+        total_invocations = 0
+        if response.get('Datapoints'):
+            for dp in response['Datapoints']:
+                total_invocations += dp.get('Sum', 0)
+
+        return int(total_invocations)
+
+    except Exception as e:
+        return 0
 
 # Load configuration
 def load_config():
@@ -361,45 +410,6 @@ def lambda_handler(event, context):
         # Calculate total skipped
         total_skipped = sum(skipped_by_reason.values())
 
-        # Save dense texts to S3
-        s3_url = None
-        s3_base_forms_url = None
-        if dense_texts and S3_BUCKET:
-            try:
-                s3_client = boto3.client("s3")
-                now_jst = datetime.now(JST)
-                timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
-
-                # Save raw texts
-                s3_key = f"badword-analysis/dense_posts_{timestamp}.txt"
-                content = "\n".join(dense_texts)
-
-                s3_client.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=s3_key,
-                    Body=content.encode("utf-8"),
-                    ContentType="text/plain; charset=utf-8",
-                )
-                s3_url = f"s3://{S3_BUCKET}/{s3_key}"
-                print(f"[S3] Saved {len(dense_texts)} dense post texts to {s3_url}")
-
-                # Save base forms (見出し語) - 1 word per line
-                if dense_base_forms:
-                    s3_base_forms_key = f"badword-analysis/dense_posts_base_forms_{timestamp}.txt"
-                    base_forms_content = "\n".join(dense_base_forms)
-
-                    s3_client.put_object(
-                        Bucket=S3_BUCKET,
-                        Key=s3_base_forms_key,
-                        Body=base_forms_content.encode("utf-8"),
-                        ContentType="text/plain; charset=utf-8",
-                    )
-                    s3_base_forms_url = f"s3://{S3_BUCKET}/{s3_base_forms_key}"
-                    print(f"[S3] Saved {len(dense_base_forms)} base forms to {s3_base_forms_url}")
-
-            except Exception as e:
-                print(f"[S3 ERROR] Failed to save dense texts: {str(e)}")
-
         # Prepare statistics data for StatsLambda
         now_jst = datetime.now(JST)
         timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
@@ -461,36 +471,51 @@ def lambda_handler(event, context):
             "version": "1.0"
         }
 
+        # Check previous day's daily file and query CloudWatch if needed
+        now_jst = datetime.now(JST)
+        yesterday = now_jst - timedelta(days=1)
+        yesterday_date = yesterday.strftime("%Y-%m-%d")
+
+        getfeed_stats = {"total_invocations": 0}
+
+        # Check if yesterday's daily file exists in STATISTICS_BUCKET
+        try:
+            s3_client = boto3.client("s3")
+            statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
+            daily_key = f"stats/daily/stats-{yesterday_date}.json"
+            s3_client.head_object(Bucket=statistics_bucket, Key=daily_key)
+        except ClientError as e:
+            # Check if it's a 404 (NoSuchKey)
+            if e.response['Error']['Code'] == '404' or e.response['Error']['Code'] == 'NoSuchKey':
+                # Daily file doesn't exist, query CloudWatch
+                getfeed_invocations = get_getfeed_invocations_for_date(yesterday_date)
+                getfeed_stats["total_invocations"] = getfeed_invocations
+        except Exception as e:
+            pass
+
         # Invoke Store Lambda asynchronously
         if items:
             lambda_client = boto3.client("lambda")
             payload = {
                 "items": items,
-                "batch_stats": stats_payload
+                "batch_stats": stats_payload,
+                "dense_texts": dense_texts,
+                "dense_base_forms": dense_base_forms,
+                "getfeed_stats": getfeed_stats
             }
-
-            # Debug: log payload info
-            print(f"[INVOKE_DEBUG] Payload items count: {len(items)}")
-            if items:
-                first = items[0]
-                last = items[-1]
-                print(f"[INVOKE_DEBUG] First item: uri={first.get('uri')}, ts={first.get('ts')}, density={first.get('density_score')}")
-                print(f"[INVOKE_DEBUG] Last item: uri={last.get('uri')}, ts={last.get('ts')}, density={last.get('density_score')}")
 
             response = lambda_client.invoke(
                 FunctionName=STORE_FUNCTION_NAME,
                 InvocationType="Event",  # Asynchronous
                 Payload=json.dumps(payload),
             )
-            print(f"[INVOKE_DEBUG] Store Lambda invoked: {response['StatusCode']}")
 
         return {
             "fetched": len(items),
             "skipped": total_skipped,
             "dense_posts": len(dense_texts),
             "total_base_forms": len(dense_base_forms),
-            "s3_url": s3_url,
-            "s3_base_forms_url": s3_base_forms_url,
+            "getfeed_stats": getfeed_stats
         }
 
     except Exception as e:

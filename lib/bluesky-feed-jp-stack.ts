@@ -195,15 +195,15 @@ export class BlueskyFeedJpStack extends cdk.Stack {
     dashboardBucket.grantWrite(ingestLambda);
     dashboardBucket.grantRead(ingestLambda); // For listing files to update index
 
-    // Grant DataControl Lambda permission to write stats to S3
-    dashboardBucket.grantReadWrite(dataControlLambda);
-
-    // Grant DataControl Lambda permission to read CloudWatch Metrics (for GetFeed Calls)
-    dataControlLambda.addToRolePolicy(new iam.PolicyStatement({
+    // Grant Ingest Lambda permission to read CloudWatch Metrics (for GetFeed Calls)
+    ingestLambda.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['cloudwatch:GetMetricStatistics'],
       resources: ['*'],
     }));
+
+    // Grant DataControl Lambda permission to write stats to S3
+    dashboardBucket.grantReadWrite(dataControlLambda);
 
 
     // === HTTP API Gateway ===

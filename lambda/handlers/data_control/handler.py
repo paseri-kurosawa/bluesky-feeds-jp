@@ -150,7 +150,7 @@ def list_batch_files_for_date(bucket, target_date):
         return []
 
 
-def aggregate_batch_files_for_date(bucket, target_date, batch_files):
+def aggregate_batch_files_for_date(bucket, target_date, batch_files, getfeed_stats=None):
     """
     Aggregate multiple batch files for a specific date
 
@@ -158,10 +158,13 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
         bucket: S3 bucket name
         target_date: Date string in format YYYY-MM-DD
         batch_files: List of S3 keys to aggregate
+        getfeed_stats: CloudWatch stats from IngestLambda (optional)
 
     Returns:
         Aggregated stats dict
     """
+    if getfeed_stats is None:
+        getfeed_stats = {"total_invocations": 0}
     if not batch_files:
         return None
 
@@ -184,9 +187,7 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
             "text_only_short": 0,
             "dense_posts": 0,
         },
-        "getfeed_stats": {
-            "total_invocations": 0,
-        },
+        "getfeed_stats": getfeed_stats,
     }
 
     try:
@@ -236,29 +237,54 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
 
         aggregated["dense_feed"]["dense_rate"] = round(dense_posts / total_items * 100, 1) if total_items > 0 else 0
 
-        # Get GetFeedLambda invocations from CloudWatch
-        print(f"[AGGREGATE_DEBUG] Getting CloudWatch invocations for {target_date}...")
-        try:
-            getfeed_invocations = get_getfeed_invocations_for_date(target_date)
-            aggregated["getfeed_stats"]["total_invocations"] = getfeed_invocations
-            print(f"[AGGREGATE_DEBUG] CloudWatch invocations: {getfeed_invocations}")
-        except Exception as cw_e:
-            print(f"[AGGREGATE] CloudWatch query failed (non-critical): {str(cw_e)}")
-            print(f"[AGGREGATE_DEBUG] CloudWatch exception: {cw_e}")
-            aggregated["getfeed_stats"]["total_invocations"] = 0
-
-        print(f"[AGGREGATE] Aggregated {len(batch_files)} files for {target_date}")
-        print(f"[AGGREGATE_DEBUG] Returning aggregated dict with getfeed_stats: {aggregated.get('getfeed_stats')}")
         return aggregated
     except Exception as e:
-        print(f"[AGGREGATE] Error aggregating batch files: {str(e)}")
-        print(f"[AGGREGATE_DEBUG] Exception details: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 
-def backfill_previous_day(bucket):
+# === Save Badword Texts to S3 ===
+def save_badword_texts_to_s3(bucket, dense_texts, dense_base_forms):
+    """Save badword analysis texts (from IngestLambda) to S3"""
+    if not dense_texts:
+        print("[BADWORD] No dense texts to save")
+        return
+
+    try:
+        now_jst = get_jst_now()
+        timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
+
+        # Save raw texts
+        if dense_texts:
+            s3_key = f"badword-analysis/dense_posts_{timestamp}.txt"
+            content = "\n".join(dense_texts)
+
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=s3_key,
+                Body=content.encode("utf-8"),
+                ContentType="text/plain; charset=utf-8",
+            )
+            print(f"[BADWORD] Saved {len(dense_texts)} dense post texts to s3://{bucket}/{s3_key}")
+
+        # Save base forms
+        if dense_base_forms:
+            s3_base_forms_key = f"badword-analysis/dense_posts_base_forms_{timestamp}.txt"
+            base_forms_content = "\n".join(dense_base_forms)
+
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=s3_base_forms_key,
+                Body=base_forms_content.encode("utf-8"),
+                ContentType="text/plain; charset=utf-8",
+            )
+            print(f"[BADWORD] Saved {len(dense_base_forms)} base forms to s3://{bucket}/{s3_base_forms_key}")
+
+    except Exception as e:
+        print(f"[BADWORD ERROR] Failed to save texts: {str(e)}")
+        raise
+
+
+def backfill_previous_day(bucket, getfeed_stats):
     """
     Check if previous day's daily stats exist. If not, backfill from batch files.
     Updates dashboard.json with new daily entry.
@@ -268,31 +294,20 @@ def backfill_previous_day(bucket):
         yesterday = now - timedelta(days=1)
         yesterday_date = yesterday.strftime("%Y-%m-%d")
         daily_key = f"stats/daily/stats-{yesterday_date}.json"
-        print(f"[BACKFILL] Checking for yesterday ({yesterday_date}): {daily_key}")
-        print(f"[BACKFILL_DEBUG] Current JST time: {now}")
 
         # Check if yesterday's daily file exists
         yesterday_exists = False
         try:
             s3_client.head_object(Bucket=bucket, Key=daily_key)
             yesterday_exists = True
-            print(f"[BACKFILL_DEBUG] Daily file already exists, skipping")
         except Exception as e:
-            print(f"[BACKFILL_DEBUG] Daily file not found (expected): {e}")
             pass
 
         if not yesterday_exists:
-            print(f"[BACKFILL] Yesterday's daily file missing, attempting to backfill from batch files")
             yesterday_batches = list_batch_files_for_date(bucket, yesterday_date)
-            print(f"[BACKFILL] Found {len(yesterday_batches)} batch files")
-            print(f"[BACKFILL_DEBUG] Batch files list: {yesterday_batches[:3] if yesterday_batches else 'EMPTY'}")
 
             if yesterday_batches:
-                print(f"[BACKFILL_DEBUG] Starting aggregate_batch_files_for_date...")
-                backfilled_entry = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches)
-                print(f"[BACKFILL_DEBUG] aggregate_batch_files_for_date returned: {type(backfilled_entry).__name__}")
-                if backfilled_entry is None:
-                    print(f"[BACKFILL_DEBUG] ERROR: aggregate returned None!")
+                backfilled_entry = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches, getfeed_stats)
                 if backfilled_entry:
                     # Save daily file for yesterday
                     s3_client.put_object(
@@ -301,7 +316,6 @@ def backfill_previous_day(bucket):
                         Body=json.dumps(backfilled_entry, ensure_ascii=False, indent=2),
                         ContentType="application/json; charset=utf-8"
                     )
-                    print(f"[BACKFILL] Backfilled yesterday's data from {len(yesterday_batches)} batch files")
 
                     # Update dashboard.json with new daily entry
                     dashboard_key = "stats/summary/dashboard.json"
@@ -327,9 +341,8 @@ def backfill_previous_day(bucket):
                         Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
                         ContentType="application/json; charset=utf-8"
                     )
-                    print(f"[BACKFILL] Updated dashboard.json with backfilled data")
     except Exception as e:
-        print(f"[BACKFILL] Warning: Backfill check failed (non-critical): {str(e)}")
+        pass
 
 
 # === Responsibility 1: Store Feeds to Valkey ===
@@ -573,6 +586,9 @@ def lambda_handler(event, context):
     """
     items = event.get("items", [])
     batch_stats = event.get("batch_stats", {})
+    dense_texts = event.get("dense_texts", [])
+    dense_base_forms = event.get("dense_base_forms", [])
+    getfeed_stats = event.get("getfeed_stats", {"total_invocations": 0})
 
     if not items:
         return {"stored_raw": 0, "stored_dense": 0, "note": "no items"}
@@ -582,9 +598,6 @@ def lambda_handler(event, context):
         batch_spread_seconds = get_batch_spread_seconds()
         raw_stored, dense_stored = store_feeds(items, batch_spread_seconds)
     except Exception as e:
-        print(f"[CRITICAL] Store feeds failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return {
             "error": str(e),
             "stored_raw": 0,
@@ -601,18 +614,22 @@ def lambda_handler(event, context):
 
             s3_key = save_stats_to_s3(enriched_stats)
             s3_saved = True
-            print(f"[PIPELINE] S3 save successful: {s3_key}")
 
         except Exception as e:
-            print(f"[OPTIONAL] Stats aggregation/save failed (non-critical): {str(e)}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print("[OPTIONAL] No batch_stats provided, skipping aggregation")
+            pass
+
+    # === OPTIONAL: Save badword texts to S3 ===
+    try:
+        if dense_texts or dense_base_forms:
+            save_badword_texts_to_s3(STATISTICS_BUCKET, dense_texts, dense_base_forms)
+    except Exception as e:
+        print(f"[OPTIONAL] Badword text save failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
 
     # === OPTIONAL: Backfill previous day's daily stats if missing ===
     try:
-        backfill_previous_day(STATISTICS_BUCKET)
+        backfill_previous_day(STATISTICS_BUCKET, getfeed_stats)
     except Exception as e:
         print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
         import traceback
