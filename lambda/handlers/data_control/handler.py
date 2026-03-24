@@ -39,6 +39,7 @@ MAX_ITEMS_RAW = 5000
 MAX_ITEMS_DENSE = 2000
 
 s3_client = boto3.client("s3")
+cloudwatch_client = boto3.client("cloudwatch")
 
 r = redis.Redis(
     host=VALKEY_ENDPOINT,
@@ -53,6 +54,61 @@ r = redis.Redis(
 def get_jst_now():
     """Get current time in JST (UTC+9)"""
     return datetime.utcnow() + timedelta(hours=9)
+
+
+def get_getfeed_invocations_for_date(target_date):
+    """
+    Get total GetFeedLambda invocations for a specific date from CloudWatch.
+
+    Args:
+        target_date: Date string in format YYYY-MM-DD
+
+    Returns:
+        Total invocation count for the date
+    """
+    try:
+        # Parse target date
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+
+        # CloudWatch query period: entire day in JST (00:00 - 23:59:59)
+        start_time = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        # Convert to UTC (JST is UTC+9)
+        start_time_utc = start_time - timedelta(hours=9)
+        end_time_utc = end_time - timedelta(hours=9)
+
+        print(f"[CLOUDWATCH] Querying GetFeedLambda invocations for {target_date}")
+        print(f"  JST: {start_time} - {end_time}")
+        print(f"  UTC: {start_time_utc} - {end_time_utc}")
+
+        # Query CloudWatch Metrics for GetFeedLambda Invocations
+        response = cloudwatch_client.get_metric_statistics(
+            Namespace='AWS/Lambda',
+            MetricName='Invocations',
+            Dimensions=[
+                {
+                    'Name': 'FunctionName',
+                    'Value': 'GetFeedLambda'
+                }
+            ],
+            StartTime=start_time_utc,
+            EndTime=end_time_utc,
+            Period=86400,  # 1 day period
+            Statistics=['Sum']
+        )
+
+        total_invocations = 0
+        if response['Datapoints']:
+            for dp in response['Datapoints']:
+                total_invocations += dp.get('Sum', 0)
+
+        print(f"[CLOUDWATCH] Total invocations for {target_date}: {total_invocations}")
+        return int(total_invocations)
+
+    except Exception as e:
+        print(f"[CLOUDWATCH] Error fetching invocations for {target_date}: {str(e)}")
+        return 0
 
 
 # === Daily Aggregation Helper Functions ===
@@ -122,6 +178,9 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
             "text_only_short": 0,
             "dense_posts": 0,
         },
+        "getfeed_stats": {
+            "total_invocations": 0,
+        },
     }
 
     try:
@@ -170,6 +229,10 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
         aggregated["badword_analysis"]["avg_matches_per_hit"] = round(total_matches / posts_with_badwords, 2) if posts_with_badwords > 0 else 0
 
         aggregated["dense_feed"]["dense_rate"] = round(dense_posts / total_items * 100, 1) if total_items > 0 else 0
+
+        # Get GetFeedLambda invocations from CloudWatch
+        getfeed_invocations = get_getfeed_invocations_for_date(target_date)
+        aggregated["getfeed_stats"]["total_invocations"] = getfeed_invocations
 
         print(f"[AGGREGATE] Aggregated {len(batch_files)} files for {target_date}")
         return aggregated
