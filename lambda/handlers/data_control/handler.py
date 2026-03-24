@@ -235,13 +235,19 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
         aggregated["dense_feed"]["dense_rate"] = round(dense_posts / total_items * 100, 1) if total_items > 0 else 0
 
         # Get GetFeedLambda invocations from CloudWatch
-        getfeed_invocations = get_getfeed_invocations_for_date(target_date)
-        aggregated["getfeed_stats"]["total_invocations"] = getfeed_invocations
+        try:
+            getfeed_invocations = get_getfeed_invocations_for_date(target_date)
+            aggregated["getfeed_stats"]["total_invocations"] = getfeed_invocations
+        except Exception as cw_e:
+            print(f"[AGGREGATE] CloudWatch query failed (non-critical): {str(cw_e)}")
+            aggregated["getfeed_stats"]["total_invocations"] = 0
 
         print(f"[AGGREGATE] Aggregated {len(batch_files)} files for {target_date}")
         return aggregated
     except Exception as e:
         print(f"[AGGREGATE] Error aggregating batch files: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
