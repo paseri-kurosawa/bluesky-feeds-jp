@@ -83,7 +83,7 @@ def get_getfeed_invocations_for_date(target_date):
         print(f"  UTC: {start_time_utc} - {end_time_utc}")
 
         # Query CloudWatch Metrics for GetFeedLambda Invocations
-        # Note: Use full CDK-generated function name (no wildcards - get_metric_statistics doesn't support them)
+        # Use 1-hour period and sum across all hours in the day
         response = cloudwatch_client.get_metric_statistics(
             Namespace='AWS/Lambda',
             MetricName='Invocations',
@@ -95,7 +95,7 @@ def get_getfeed_invocations_for_date(target_date):
             ],
             StartTime=start_time_utc,
             EndTime=end_time_utc,
-            Period=86400,  # 1 day period
+            Period=3600,  # 1 hour period (CloudWatch stores hourly data)
             Statistics=['Sum']
         )
 
@@ -103,12 +103,15 @@ def get_getfeed_invocations_for_date(target_date):
         if response['Datapoints']:
             for dp in response['Datapoints']:
                 total_invocations += dp.get('Sum', 0)
+            print(f"[CLOUDWATCH] Found {len(response['Datapoints'])} hourly datapoints")
 
         print(f"[CLOUDWATCH] Total invocations for {target_date}: {total_invocations}")
         return int(total_invocations)
 
     except Exception as e:
         print(f"[CLOUDWATCH] Error fetching invocations for {target_date}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 0
 
 
