@@ -7,6 +7,8 @@ import unicodedata
 from datetime import datetime, timedelta
 
 # === Configuration ===
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
+
 def load_config():
     """Load configuration from config.json"""
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -235,17 +237,22 @@ def aggregate_batch_files_for_date(bucket, target_date, batch_files):
         aggregated["dense_feed"]["dense_rate"] = round(dense_posts / total_items * 100, 1) if total_items > 0 else 0
 
         # Get GetFeedLambda invocations from CloudWatch
+        print(f"[AGGREGATE_DEBUG] Getting CloudWatch invocations for {target_date}...")
         try:
             getfeed_invocations = get_getfeed_invocations_for_date(target_date)
             aggregated["getfeed_stats"]["total_invocations"] = getfeed_invocations
+            print(f"[AGGREGATE_DEBUG] CloudWatch invocations: {getfeed_invocations}")
         except Exception as cw_e:
             print(f"[AGGREGATE] CloudWatch query failed (non-critical): {str(cw_e)}")
+            print(f"[AGGREGATE_DEBUG] CloudWatch exception: {cw_e}")
             aggregated["getfeed_stats"]["total_invocations"] = 0
 
         print(f"[AGGREGATE] Aggregated {len(batch_files)} files for {target_date}")
+        print(f"[AGGREGATE_DEBUG] Returning aggregated dict with getfeed_stats: {aggregated.get('getfeed_stats')}")
         return aggregated
     except Exception as e:
         print(f"[AGGREGATE] Error aggregating batch files: {str(e)}")
+        print(f"[AGGREGATE_DEBUG] Exception details: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -262,22 +269,30 @@ def backfill_previous_day(bucket):
         yesterday_date = yesterday.strftime("%Y-%m-%d")
         daily_key = f"stats/daily/stats-{yesterday_date}.json"
         print(f"[BACKFILL] Checking for yesterday ({yesterday_date}): {daily_key}")
+        print(f"[BACKFILL_DEBUG] Current JST time: {now}")
 
         # Check if yesterday's daily file exists
         yesterday_exists = False
         try:
             s3_client.head_object(Bucket=bucket, Key=daily_key)
             yesterday_exists = True
-        except Exception:
+            print(f"[BACKFILL_DEBUG] Daily file already exists, skipping")
+        except Exception as e:
+            print(f"[BACKFILL_DEBUG] Daily file not found (expected): {e}")
             pass
 
         if not yesterday_exists:
             print(f"[BACKFILL] Yesterday's daily file missing, attempting to backfill from batch files")
             yesterday_batches = list_batch_files_for_date(bucket, yesterday_date)
             print(f"[BACKFILL] Found {len(yesterday_batches)} batch files")
+            print(f"[BACKFILL_DEBUG] Batch files list: {yesterday_batches[:3] if yesterday_batches else 'EMPTY'}")
 
             if yesterday_batches:
+                print(f"[BACKFILL_DEBUG] Starting aggregate_batch_files_for_date...")
                 backfilled_entry = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches)
+                print(f"[BACKFILL_DEBUG] aggregate_batch_files_for_date returned: {type(backfilled_entry).__name__}")
+                if backfilled_entry is None:
+                    print(f"[BACKFILL_DEBUG] ERROR: aggregate returned None!")
                 if backfilled_entry:
                     # Save daily file for yesterday
                     s3_client.put_object(
