@@ -83,13 +83,14 @@ def get_getfeed_invocations_for_date(target_date):
         print(f"  UTC: {start_time_utc} - {end_time_utc}")
 
         # Query CloudWatch Metrics for GetFeedLambda Invocations
+        # Note: Use wildcard pattern to match GetFeedLambda with any CDK-generated suffix
         response = cloudwatch_client.get_metric_statistics(
             Namespace='AWS/Lambda',
             MetricName='Invocations',
             Dimensions=[
                 {
                     'Name': 'FunctionName',
-                    'Value': 'GetFeedLambda'
+                    'Value': 'BlueskyFeedJpStack-GetFeedLambda*'
                 }
             ],
             StartTime=start_time_utc,
