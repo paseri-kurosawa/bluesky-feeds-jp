@@ -746,6 +746,43 @@ def save_stats_to_s3(batch_stats):
                 "daily": []
             }
 
+        # Save latest_report to components/latest_report.json
+        latest_report_key = "components/latest_report.json"
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=latest_report_key,
+            Body=json.dumps(dashboard_stats, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved latest_report to {latest_report_key}")
+
+        # Save stable_hashtags to components/stable_hashtags.json
+        stable_hashtags_key = "components/stable_hashtags.json"
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=stable_hashtags_key,
+            Body=json.dumps({
+                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "top_hashtags": stable_hashtags
+            }, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved stable_hashtags to {stable_hashtags_key}")
+
+        # Save top_hashtags_1h to components/top_hashtags_1h.json
+        top_hashtags_1h_key = "components/top_hashtags_1h.json"
+        top_hashtags_1h = dashboard_stats.get("top_hashtags_1h", [])
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=top_hashtags_1h_key,
+            Body=json.dumps({
+                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "top_hashtags_1h": top_hashtags_1h
+            }, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved top_hashtags_1h to {top_hashtags_1h_key}")
+
         # Update latest section
         dashboard_data["generated_at"] = get_jst_now().strftime("%Y-%m-%d %H:%M:%S")
         dashboard_data["latest"] = dashboard_stats
@@ -756,7 +793,7 @@ def save_stats_to_s3(batch_stats):
             Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Updated dashboard.json with stable_hashtags")
+        print(f"[S3] Updated dashboard.json with latest stats")
 
         return s3_key
     except Exception as e:

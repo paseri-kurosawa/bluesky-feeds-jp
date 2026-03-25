@@ -1,19 +1,60 @@
+import { useState, useEffect } from 'react'
 import './TrendHashtags.css'
 
 export function TrendHashtags({ data }) {
-  if (!data) {
+  const [trends, setTrends] = useState({
+    timestamp: null,
+    stable_hashtags: [],
+    top_hashtags_1h: []
+  })
+  const [loading, setLoading] = useState(true)
+  const bucketUrl = 'https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com'
+
+  useEffect(() => {
+    const fetchTrendData = async () => {
+      try {
+        // Fetch stable hashtags
+        const stableUrl = `${bucketUrl}/components/stable_hashtags.json`
+        const stableResponse = await fetch(stableUrl)
+        let stableData = []
+        let timestamp = null
+        if (stableResponse.ok) {
+          const json = await stableResponse.json()
+          stableData = json.top_hashtags || []
+          timestamp = json.generated_at
+        }
+
+        // Fetch top hashtags 1H
+        const trendUrl = `${bucketUrl}/components/top_hashtags_1h.json`
+        const trendResponse = await fetch(trendUrl)
+        let trendData = []
+        if (trendResponse.ok) {
+          const json = await trendResponse.json()
+          trendData = json.top_hashtags_1h || []
+        }
+
+        setTrends({
+          timestamp: timestamp || new Date().toISOString(),
+          stable_hashtags: stableData,
+          top_hashtags_1h: trendData
+        })
+      } catch (err) {
+        console.error('Error fetching trend data:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchTrendData()
+  }, [])
+
+  if (loading || !trends) {
     return (
       <div className="trend-hashtags">
         <h2>Trend Hashtags</h2>
-        <p>No data available</p>
+        <p>Loading...</p>
       </div>
     )
-  }
-
-  const trends = {
-    timestamp: data.timestamp,
-    stable_hashtags: data.stable_hashtags || [],
-    top_hashtags_1h: data.top_hashtags_1h || []
   }
 
   const renderTable = (hashtags) => (

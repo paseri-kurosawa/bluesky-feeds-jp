@@ -248,7 +248,12 @@ def get_rotation_state(bucket):
         return state
     except Exception as e:
         print(f"[ROTATION] Error loading state: {e}, initializing with default")
-        return {"current_index": 0, "last_rotation_time": datetime.now(JST).isoformat(), "total_rotations": 0}
+        return {
+            "current_index": 0,
+            "last_rotation_time": datetime.now(JST).isoformat(),
+            "total_rotations": 0,
+            "stable_hashtags": []
+        }
 
 
 def save_rotation_state(bucket, state):
@@ -269,9 +274,9 @@ def save_rotation_state(bucket, state):
 
 
 def get_stable_hashtags(bucket):
-    """Load stable hashtags from S3"""
+    """Load stable hashtags from S3 components directory"""
     s3_client = boto3.client("s3")
-    hashtags_key = "hashtags/summary/stable_hashtags.json"
+    hashtags_key = "components/stable_hashtags.json"
 
     try:
         response = s3_client.get_object(Bucket=bucket, Key=hashtags_key)
@@ -279,7 +284,7 @@ def get_stable_hashtags(bucket):
         tags = data.get("top_hashtags", [])
         return tags
     except Exception as e:
-        print(f"[HASHTAGS] Error loading stable hashtags: {e}")
+        print(f"[HASHTAGS] Error loading stable hashtags from {hashtags_key}: {e}")
         return []
 
 
@@ -302,11 +307,12 @@ def get_current_hashtag(bucket):
 
     print(f"[ROTATION] Current index: {current_index}, Tag: #{current_tag}")
 
-    # Prepare next state
+    # Prepare next state with stable_hashtags
     next_state = {
         "current_index": (current_index + 1) % len(active_tags),
         "last_rotation_time": datetime.now(JST).isoformat(),
-        "total_rotations": state.get("total_rotations", 0) + 1
+        "total_rotations": state.get("total_rotations", 0) + 1,
+        "stable_hashtags": tags  # Include all stable hashtags (used by Dashboard & Ingest)
     }
 
     return current_tag, next_state

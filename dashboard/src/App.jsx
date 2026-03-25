@@ -10,46 +10,47 @@ export default function App() {
   const [dailyStats, setDailyStats] = useState([])
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
+  const bucketUrl = 'https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com'
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch consolidated dashboard data (latest batch + daily stats)
-      const dashboardUrl = `https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com/stats/summary/dashboard.json`
-
-      const response = await fetch(dashboardUrl)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch dashboard data: ${response.status}`)
+      // Fetch latest report from components
+      const latestUrl = `${bucketUrl}/components/latest_report.json`
+      const latestResponse = await fetch(latestUrl)
+      if (latestResponse.ok) {
+        const latestData = await latestResponse.json()
+        setLatestBatch(latestData)
       }
 
-      const dashboardData = await response.json()
-
-      // Set latest batch from dashboard data
-      if (dashboardData.latest) {
-        setLatestBatch(dashboardData.latest)
+      // Fetch daily stats from components (or fallback to dashboard.json)
+      const dailyUrl = `${bucketUrl}/components/processing_trends.json`
+      const dailyResponse = await fetch(dailyUrl)
+      if (dailyResponse.ok) {
+        const dailyData = await dailyResponse.json()
+        setDailyStats(Array.isArray(dailyData) ? dailyData : dailyData.daily || [])
+      } else {
+        // Fallback to dashboard.json for daily stats
+        const dashboardUrl = `${bucketUrl}/stats/summary/dashboard.json`
+        const dashboardResponse = await fetch(dashboardUrl)
+        if (dashboardResponse.ok) {
+          const dashboardData = await dashboardResponse.json()
+          if (dashboardData.daily && dashboardData.daily.length > 0) {
+            setDailyStats(dashboardData.daily)
+          }
+        }
       }
 
-      // Set daily stats from dashboard data
-      if (dashboardData.daily && dashboardData.daily.length > 0) {
-        setDailyStats(dashboardData.daily)
-      }
+      setError(null)
     } catch (err) {
       console.error('Error fetching dashboard data:', err)
       setError(err.message)
-    }
-  }
-
-  const fetchStats = async () => {
-    try {
-      // Fetch consolidated dashboard data
-      await fetchDashboardData()
-      setError(null)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchStats()
+    fetchDashboardData()
   }, [])
 
   if (loading && !latestBatch) {
@@ -87,7 +88,7 @@ export default function App() {
             </section>
 
             <section className="section trend-hashtags">
-              <TrendHashtags data={latestBatch} />
+              <TrendHashtags />
             </section>
 
             <section className="section time-series">
