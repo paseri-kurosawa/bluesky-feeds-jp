@@ -446,9 +446,10 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
         if ts < 0:
             continue
 
-        # Calculate visible_ts: distribute posts across batch_spread_seconds window for stablehashtag
+        # Calculate visible_ts: distribute posts across (batch_spread_seconds * top_n) window for stablehashtag
+        # Multiply by top_n to ensure diversity across rotating hashtags
         if stablehashtag_count > 1:
-            offset = (idx / (stablehashtag_count - 1)) * batch_spread_seconds
+            offset = (idx / (stablehashtag_count - 1)) * batch_spread_seconds * top_n
         else:
             offset = 0
         visible_ts = now + offset
@@ -845,14 +846,19 @@ def lambda_handler(event, context):
     dense_base_forms = event.get("dense_base_forms", [])
     getfeed_stats = event.get("getfeed_stats", {"total_invocations": 0})
     hashtags = event.get("hashtags", {})
+    top_n = event.get("top_n")
 
     if not items_raw and not items_stablehashtag:
         return {"stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0, "note": "no items"}
 
+    if top_n is None:
+        print("[ERROR] top_n is missing from event payload")
+        raise ValueError("top_n must be provided in event payload")
+
     # === CRITICAL: Store feeds to Valkey ===
     try:
         batch_spread_seconds = get_batch_spread_seconds()
-        raw_stored, dense_stored, stablehashtag_stored = store_feeds(items_raw, items_stablehashtag, batch_spread_seconds)
+        raw_stored, dense_stored, stablehashtag_stored = store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n)
     except Exception as e:
         return {
             "error": str(e),

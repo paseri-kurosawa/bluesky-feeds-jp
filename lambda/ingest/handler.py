@@ -628,6 +628,8 @@ def lambda_handler(event, context):
         if items_raw or items_stablehashtag:
             print(f"[DEBUG_INVOKE] Attempting to invoke DataControl Lambda...")
             lambda_client = boto3.client("lambda")
+            config = get_config()
+            top_n = config.get("hashtag_rotation", {}).get("top_n", 5)
             payload = {
                 "items_raw": items_raw,
                 "items_stablehashtag": items_stablehashtag,
@@ -635,7 +637,8 @@ def lambda_handler(event, context):
                 "dense_texts": dense_texts,
                 "dense_base_forms": dense_base_forms,
                 "getfeed_stats": getfeed_stats,
-                "hashtags": hashtag_counts
+                "hashtags": hashtag_counts,
+                "top_n": top_n
             }
 
             try:
