@@ -283,8 +283,11 @@ def get_stable_hashtags(bucket):
         return []
 
 
-def get_current_hashtag(bucket, top_n=5):
+def get_current_hashtag(bucket):
     """Get current hashtag based on rotation state"""
+    config = get_config()
+    top_n = config.get("hashtag_rotation", {}).get("top_n", 5)
+
     state = get_rotation_state(bucket)
     tags = get_stable_hashtags(bucket)
 
@@ -292,7 +295,7 @@ def get_current_hashtag(bucket, top_n=5):
         print("[HASHTAGS] No stable tags available")
         return None, state
 
-    # Use only top_n tags
+    # Use only top_n tags from config
     active_tags = tags[:top_n]
     current_index = state.get("current_index", 0) % len(active_tags)
     current_tag = active_tags[current_index]["tag"]

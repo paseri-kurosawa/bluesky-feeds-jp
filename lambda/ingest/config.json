@@ -98,5 +98,10 @@
         }
       }
     }
+  },
+  "hashtag_rotation": {
+    "description": "Stable Hashtag フィード用のローテーション設定",
+    "top_n": 5,
+    "top_n_note": "stable_hashtags.json の top_hashtags 配列から、上位 N 個を使用してローテーション"
   }
 }
