@@ -622,11 +622,7 @@ def lambda_handler(event, context):
             pass
 
         # Invoke Store Lambda asynchronously
-        print(f"[DEBUG_INVOKE] STORE_FUNCTION_NAME={STORE_FUNCTION_NAME}")
-        print(f"[DEBUG_INVOKE] items_raw={len(items_raw)}, items_stablehashtag={len(items_stablehashtag)}")
-
         if items_raw or items_stablehashtag:
-            print(f"[DEBUG_INVOKE] Attempting to invoke DataControl Lambda...")
             lambda_client = boto3.client("lambda")
             config = get_config()
             top_n = config.get("hashtag_rotation", {}).get("top_n", 5)

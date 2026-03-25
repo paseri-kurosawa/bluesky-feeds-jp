@@ -358,7 +358,7 @@ def backfill_previous_day(bucket, getfeed_stats):
 
 
 # === Responsibility 1: Store Feeds to Valkey ===
-def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
+def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
     """
     Store posts to Valkey feed:raw, feed:dense, and feed:stablehashtag ZSETs.
 
@@ -366,6 +366,7 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
         items_raw: Posts from lang:ja query
         items_stablehashtag: Posts from lang:ja #<tag> query
         batch_spread_seconds: Window for distributing visible_ts
+        top_n: Number of hashtags in rotation (only applied to stablehashtag feed)
 
     Returns: (raw_stored, dense_stored, stablehashtag_stored)
     Raises: Exception on critical failure
@@ -852,8 +853,8 @@ def lambda_handler(event, context):
         return {"stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0, "note": "no items"}
 
     if top_n is None:
-        print("[ERROR] top_n is missing from event payload")
-        raise ValueError("top_n must be provided in event payload")
+        print(f"[ERROR] top_n is missing from event payload, cannot proceed")
+        return {"error": "top_n is required", "stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0}
 
     # === CRITICAL: Store feeds to Valkey ===
     try:
