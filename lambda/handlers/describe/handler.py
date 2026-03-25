@@ -24,6 +24,7 @@ def lambda_handler(event, context):
     # Feed URIs for paseri-kurosawa.bsky.social
     raw_feed_uri = "at://did:plc:yqlqxclzbkxgft7atmezp7eg/app.bsky.feed.generator/japanese-raw-feed"
     dense_feed_uri = "at://did:plc:yqlqxclzbkxgft7atmezp7eg/app.bsky.feed.generator/japanese-dense-feed"
+    stablehashtag_feed_uri = "at://did:plc:yqlqxclzbkxgft7atmezp7eg/app.bsky.feed.generator/japanese-stablehashtag-feed"
 
     # Load images as data URLs
     blue_image = load_image_as_data_url("feed_image_blue.png")
@@ -42,6 +43,12 @@ def lambda_handler(event, context):
                 "uri": dense_feed_uri,
                 "displayName": "Japanese Dense Feed",
                 "description": "日本語の[時系列順／高密度／平穏]フィード。※正常動作しますが、挙動を調整することがあります。",
+                "avatar": green_image
+            },
+            {
+                "uri": stablehashtag_feed_uri,
+                "displayName": "Japanese Stable Hashtags Feed",
+                "description": "日本語の[安定ハッシュタグ中心]トレンドフィード。中期的に使用されているハッシュタグを軸にしています。",
                 "avatar": green_image
             }
         ]

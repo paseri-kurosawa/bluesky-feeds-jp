@@ -56,7 +56,7 @@ def lambda_handler(event, context):
             except Exception:
                 body = {}
 
-        # Get feed type (raw or dense)
+        # Get feed type (raw, dense, or stablehashtag)
         # Support both query parameter and raw query string
         feed_type = body.get("feed") or params.get("feed") or "raw"
 
@@ -69,6 +69,8 @@ def lambda_handler(event, context):
                     feed_type = "raw"
                 elif rkey == "japanese-dense-feed":
                     feed_type = "dense"
+                elif rkey == "japanese-stablehashtag-feed":
+                    feed_type = "stablehashtag"
             except Exception:
                 pass
 
@@ -77,18 +79,27 @@ def lambda_handler(event, context):
             raw_query = event.get("rawQueryString", "")
             if "feed=dense" in raw_query:
                 feed_type = "dense"
+            elif "feed=stablehashtag" in raw_query:
+                feed_type = "stablehashtag"
             elif "feed=raw" in raw_query:
                 feed_type = "raw"
 
-        if feed_type not in ["raw", "dense"]:
+        if feed_type not in ["raw", "dense", "stablehashtag"]:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": f"Invalid feed type '{feed_type}'. Must be 'raw' or 'dense'."})
+                "body": json.dumps({"error": f"Invalid feed type '{feed_type}'. Must be 'raw', 'dense', or 'stablehashtag'."})
             }
 
         # Select ZSET key
         feed_key = f"feed:{feed_type}:jp:v1"
+
+        # Debug: Check ZCARD
+        try:
+            zcard = r.zcard(feed_key)
+            print(f"[DEBUG] ZCARD {feed_key}: {zcard}")
+        except Exception as e:
+            print(f"[DEBUG] ZCARD error: {e}")
 
         # Get limit
         limit = int(body.get("limit") or params.get("limit") or DEFAULT_LIMIT)
@@ -132,6 +143,8 @@ def lambda_handler(event, context):
             num=limit + 1,
             withscores=True,
         )
+
+        print(f"[DEBUG] zrevrangebyscore result count: {len(raw)}, max_score: {max_score}, offset: {offset}, limit: {limit}")
 
         # Build feed items
         # Always return requested limit regardless of batch state

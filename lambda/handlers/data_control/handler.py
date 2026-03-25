@@ -39,6 +39,7 @@ VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
 STATISTICS_BUCKET = os.environ.get("STATISTICS_BUCKET", "")
 MAX_ITEMS_RAW = 5000
 MAX_ITEMS_DENSE = 2000
+MAX_ITEMS_STABLETAG = 2000
 
 s3_client = boto3.client("s3")
 cloudwatch_client = boto3.client("cloudwatch")
@@ -346,11 +347,16 @@ def backfill_previous_day(bucket, getfeed_stats):
 
 
 # === Responsibility 1: Store Feeds to Valkey ===
-def store_feeds(items, batch_spread_seconds):
+def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
     """
-    Store posts to Valkey feed:raw and feed:dense ZSETs.
+    Store posts to Valkey feed:raw, feed:dense, and feed:stablehashtag ZSETs.
 
-    Returns: (raw_stored, dense_stored)
+    Args:
+        items_raw: Posts from lang:ja query
+        items_stablehashtag: Posts from lang:ja #<tag> query
+        batch_spread_seconds: Window for distributing visible_ts
+
+    Returns: (raw_stored, dense_stored, stablehashtag_stored)
     Raises: Exception on critical failure
     """
     r.ping()
@@ -358,9 +364,11 @@ def store_feeds(items, batch_spread_seconds):
     now = int(time.time())
     raw_stored = 0
     dense_stored = 0
-    items_count = len(items)
+    stablehashtag_stored = 0
 
-    for idx, item in enumerate(items):
+    # === Store Raw Feed ===
+    items_count = len(items_raw)
+    for idx, item in enumerate(items_raw):
         uri = item.get("uri")
         ts = item.get("ts")
         density_score = item.get("density_score", 0)
@@ -411,16 +419,60 @@ def store_feeds(items, batch_spread_seconds):
                 print(f"[ERROR] Dense zadd failed for {uri}: {e}")
                 raise
 
-    # Trim both feeds to their limits (keep latest)
+    # === Store StableTag Feed ===
+    stablehashtag_count = len(items_stablehashtag)
+    for idx, item in enumerate(items_stablehashtag):
+        uri = item.get("uri")
+        ts = item.get("ts")
+        density_score = item.get("density_score", 0)
+
+        if not uri or ts is None:
+            continue
+
+        # Validate timestamp
+        if ts > now + 300:
+            ts = now
+        if ts < 0:
+            continue
+
+        # Calculate visible_ts: distribute posts across batch_spread_seconds window for stablehashtag
+        if stablehashtag_count > 1:
+            offset = (idx / (stablehashtag_count - 1)) * batch_spread_seconds
+        else:
+            offset = 0
+        visible_ts = now + offset
+
+        # Create member as JSON with metadata
+        member = json.dumps({
+            "uri": uri,
+            "ts": ts,
+            "visible_ts": visible_ts,
+            "density_score": density_score,
+            "hashtags": item.get("hashtags", [])
+        }, ensure_ascii=False)
+
+        # Store in stablehashtag feed
+        try:
+            result_stablehashtag = r.zadd("feed:stablehashtag:jp:v1", {member: visible_ts})
+            stablehashtag_stored += 1
+            if result_stablehashtag == 0:
+                print(f"[WARN] StableTag zadd returned 0 (duplicate?): {uri}")
+        except Exception as e:
+            print(f"[ERROR] StableTag zadd failed for {uri}: {e}")
+            raise
+
+    # Trim all feeds to their limits (keep latest)
     r.zremrangebyrank("feed:raw:jp:v1", 0, -MAX_ITEMS_RAW - 1)
     r.zremrangebyrank("feed:dense:jp:v1", 0, -MAX_ITEMS_DENSE - 1)
+    r.zremrangebyrank("feed:stablehashtag:jp:v1", 0, -MAX_ITEMS_STABLETAG - 1)
 
     raw_zcard = r.zcard("feed:raw:jp:v1")
     dense_zcard = r.zcard("feed:dense:jp:v1")
-    print(f"[STORE] Stored - Raw: {raw_stored}, Dense: {dense_stored}")
-    print(f"[STORE] Final - Raw ZCARD: {raw_zcard}, Dense ZCARD: {dense_zcard}")
+    stablehashtag_zcard = r.zcard("feed:stablehashtag:jp:v1")
+    print(f"[STORE] Stored - Raw: {raw_stored}, Dense: {dense_stored}, StableTag: {stablehashtag_stored}")
+    print(f"[STORE] Final - Raw ZCARD: {raw_zcard}, Dense ZCARD: {dense_zcard}, StableTag ZCARD: {stablehashtag_zcard}")
 
-    return raw_stored, dense_stored
+    return raw_stored, dense_stored, stablehashtag_stored
 
 
 # === Responsibility 2: Aggregate Statistics ===
@@ -717,35 +769,38 @@ def lambda_handler(event, context):
     DataControlLambda: Invoked asynchronously by Ingest Lambda.
 
     Responsibilities:
-    1. Store posts to Valkey (CRITICAL)
+    1. Store posts to Valkey (CRITICAL) - raw, dense, and stablehashtag
     2. Aggregate statistics (OPTIONAL)
     3. Save to S3 (OPTIONAL if aggregation succeeds)
 
     Expected event:
     {
-        "items": [...],
+        "items_raw": [...],
+        "items_stablehashtag": [...],
         "batch_stats": {...}
     }
     """
-    items = event.get("items", [])
+    items_raw = event.get("items_raw", [])
+    items_stablehashtag = event.get("items_stablehashtag", [])
     batch_stats = event.get("batch_stats", {})
     dense_texts = event.get("dense_texts", [])
     dense_base_forms = event.get("dense_base_forms", [])
     getfeed_stats = event.get("getfeed_stats", {"total_invocations": 0})
     hashtags = event.get("hashtags", {})
 
-    if not items:
-        return {"stored_raw": 0, "stored_dense": 0, "note": "no items"}
+    if not items_raw and not items_stablehashtag:
+        return {"stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0, "note": "no items"}
 
     # === CRITICAL: Store feeds to Valkey ===
     try:
         batch_spread_seconds = get_batch_spread_seconds()
-        raw_stored, dense_stored = store_feeds(items, batch_spread_seconds)
+        raw_stored, dense_stored, stablehashtag_stored = store_feeds(items_raw, items_stablehashtag, batch_spread_seconds)
     except Exception as e:
         return {
             "error": str(e),
             "stored_raw": 0,
             "stored_dense": 0,
+            "stored_stablehashtag": 0,
         }
 
     # === OPTIONAL: Aggregate statistics and save to S3 ===
@@ -801,5 +856,6 @@ def lambda_handler(event, context):
     return {
         "stored_raw": raw_stored,
         "stored_dense": dense_stored,
+        "stored_stablehashtag": stablehashtag_stored,
         "stats_saved": s3_saved
     }

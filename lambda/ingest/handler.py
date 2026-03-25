@@ -198,13 +198,14 @@ def extract_hashtags(record):
     return hashtags
 
 
-def search_posts_with_retry(client, search_config, max_retries=3):
+def search_posts_with_retry(client, search_query, search_config, max_retries=3):
     """
     Search posts with exponential backoff retry logic.
 
     Args:
         client: atproto Client instance
-        search_config: Search configuration dict
+        search_query: Query string to search for
+        search_config: Search configuration dict (contains limit and sort)
         max_retries: Maximum number of retry attempts
 
     Returns:
@@ -213,7 +214,6 @@ def search_posts_with_retry(client, search_config, max_retries=3):
     from atproto_client.exceptions import InvokeTimeoutError
     import httpx
 
-    search_query = search_config["query"]
     search_limit = search_config["limit"]
     search_sort = search_config["sort"]
 
@@ -235,6 +235,190 @@ def search_posts_with_retry(client, search_config, max_retries=3):
             else:
                 print(f"[ERROR] Search failed after {max_retries} attempts")
                 raise
+
+
+def get_rotation_state(bucket):
+    """Load rotation state from S3"""
+    s3_client = boto3.client("s3")
+    state_key = "hashtags/rotation/state.json"
+
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=state_key)
+        state = json.loads(response["Body"].read().decode("utf-8"))
+        return state
+    except Exception as e:
+        print(f"[ROTATION] Error loading state: {e}, initializing with default")
+        return {"current_index": 0, "last_rotation_time": datetime.now(JST).isoformat(), "total_rotations": 0}
+
+
+def save_rotation_state(bucket, state):
+    """Save updated rotation state to S3"""
+    s3_client = boto3.client("s3")
+    state_key = "hashtags/rotation/state.json"
+
+    try:
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=state_key,
+            Body=json.dumps(state, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[ROTATION] Updated state: index={state['current_index']}, rotations={state['total_rotations']}")
+    except Exception as e:
+        print(f"[ROTATION] Error saving state: {e}")
+
+
+def get_stable_hashtags(bucket):
+    """Load stable hashtags from S3"""
+    s3_client = boto3.client("s3")
+    hashtags_key = "hashtags/summary/stable_hashtags.json"
+
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=hashtags_key)
+        data = json.loads(response["Body"].read().decode("utf-8"))
+        tags = data.get("top_hashtags", [])
+        return tags
+    except Exception as e:
+        print(f"[HASHTAGS] Error loading stable hashtags: {e}")
+        return []
+
+
+def get_current_hashtag(bucket, top_n=5):
+    """Get current hashtag based on rotation state"""
+    state = get_rotation_state(bucket)
+    tags = get_stable_hashtags(bucket)
+
+    if not tags:
+        print("[HASHTAGS] No stable tags available")
+        return None, state
+
+    # Use only top_n tags
+    active_tags = tags[:top_n]
+    current_index = state.get("current_index", 0) % len(active_tags)
+    current_tag = active_tags[current_index]["tag"]
+
+    print(f"[ROTATION] Current index: {current_index}, Tag: #{current_tag}")
+
+    # Prepare next state
+    next_state = {
+        "current_index": (current_index + 1) % len(active_tags),
+        "last_rotation_time": datetime.now(JST).isoformat(),
+        "total_rotations": state.get("total_rotations", 0) + 1
+    }
+
+    return current_tag, next_state
+
+
+def process_posts_with_filters(posts, feed_type="raw"):
+    """
+    Process posts with common filters and scoring.
+
+    Args:
+        posts: List of posts from Bluesky search
+        feed_type: "raw" or "stablehashtag" (for logging)
+
+    Returns:
+        Tuple: (items, dense_texts, dense_base_forms, badword_stats, skipped_by_reason)
+    """
+    items = []
+    dense_texts = []
+    dense_base_forms = []
+    skipped_by_reason = {
+        "invalid_fields": 0,
+        "moderation_labels": 0,
+        "non_japanese": 0,
+        "spam_hashtags": 0,
+    }
+    badword_stats = {
+        "total_posts_with_badwords": 0,
+        "total_badword_matches": 0,
+        "badword_distribution": {},
+        "matched_words": {},
+    }
+
+    print(f"\n[{feed_type.upper()}] Processing {len(posts)} posts with filters...")
+
+    for post in posts:
+        uri = post.uri
+        indexed_at = post.indexed_at
+
+        if not uri or not indexed_at:
+            skipped_by_reason["invalid_fields"] += 1
+            continue
+
+        # Skip posts with labels (moderation)
+        if has_any_labels(post):
+            print(f"[FILTER] Moderation: {uri}")
+            skipped_by_reason["moderation_labels"] += 1
+            continue
+
+        # Extract text and post attributes
+        record = getattr(post, "record", None)
+        text = getattr(record, "text", "") if record else ""
+
+        # Verify Japanese with fastText
+        if not is_japanese(text):
+            print(f"[FILTER] Non-Japanese: {uri}")
+            skipped_by_reason["non_japanese"] += 1
+            continue
+
+        # Extract post attributes
+        is_reply = bool(getattr(record, "reply", None)) if record else False
+
+        # Check for images and videos in embed
+        has_images = False
+        embed = getattr(record, "embed", None) if record else None
+        if embed:
+            images = getattr(embed, "images", None)
+            video = getattr(embed, "video", None)
+            has_images = bool(images or video)
+
+        # Extract hashtag count and names from facets
+        hashtag_count = extract_hashtag_count(record)
+        hashtags = extract_hashtags(record)
+
+        # Skip posts with 5+ hashtags (spam detection)
+        if hashtag_count >= 5:
+            print(f"[FILTER] Spam (hashtags >= 5): {uri} ({hashtag_count} hashtags)")
+            skipped_by_reason["spam_hashtags"] += 1
+            continue
+
+        # Calculate density score with attributes
+        density_score, badword_count, matched_words = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
+
+        # Record badword statistics
+        if badword_count > 0:
+            badword_stats["total_posts_with_badwords"] += 1
+            badword_stats["total_badword_matches"] += badword_count
+            key = str(badword_count)
+            badword_stats["badword_distribution"][key] = badword_stats["badword_distribution"].get(key, 0) + 1
+            for word in matched_words:
+                badword_stats["matched_words"][word] = badword_stats["matched_words"].get(word, 0) + 1
+
+        # Convert indexed_at to timestamp
+        ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))
+
+        items.append({
+            "uri": uri,
+            "ts": ts,
+            "density_score": density_score,
+            "hashtags": hashtags,
+        })
+
+        # Collect text and base forms if it will go to Dense feed
+        if density_score >= get_density_threshold():
+            text_escaped = text.replace("\n", "\\n").replace("\r", "\\r")
+            dense_texts.append(text_escaped)
+
+            try:
+                base_forms = extract_base_forms(text)
+                dense_base_forms.extend(base_forms)
+            except Exception as e:
+                print(f"[EXTRACT_BASE_FORMS_ERROR] {uri}: {e}")
+
+        print(f"[ADDED] {uri} (density={density_score:.3f})")
+
+    return items, dense_texts, dense_base_forms, badword_stats, skipped_by_reason
 
 
 def lambda_handler(event, context):
@@ -261,133 +445,58 @@ def lambda_handler(event, context):
         client = Client()
         client.login(bsky_handle, bsky_app_password)
 
-        # Search posts with retry logic
+        # Get statistics bucket
+        statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
+
+        # === QUERY 1: lang:ja (RAW/DENSE) ===
         config = get_config()
         search_config = config["search"]
-        res = search_posts_with_retry(client, search_config, max_retries=3)
+        search_query_1 = search_config["query"]  # Should be "lang:ja"
 
-        # Process results
-        items = []
-        dense_texts = []  # Collect texts for Dense feed
-        dense_base_forms = []  # Collect base forms (見出し語) for badword dictionary creation
-        text_only_short_count = 0  # Count of text-only posts ≤15 chars
-        skipped_by_reason = {
-            "invalid_fields": 0,
-            "moderation_labels": 0,
-            "non_japanese": 0,
-            "spam_hashtags": 0,
-        }
-        badword_stats = {
-            "total_posts_with_badwords": 0,
-            "total_badword_matches": 0,
-            "badword_distribution": {},  # Count by number of matches per post
-            "matched_words": {},  # Count by matched word name
-        }
+        res_1 = search_posts_with_retry(client, search_query_1, search_config, max_retries=3)
+        posts_1 = getattr(res_1, "posts", []) or []
+        print(f"[QUERY1] Found {len(posts_1)} posts for: {search_query_1}")
 
-        posts = getattr(res, "posts", []) or []
-        print(f"Found {len(posts)} posts")
+        # Process Query 1 posts
+        items_raw, dense_texts, dense_base_forms, badword_stats, skipped_by_reason = process_posts_with_filters(posts_1, feed_type="raw")
 
-        for post in posts:
-            uri = post.uri
-            indexed_at = post.indexed_at
+        # Count text-only short posts
+        text_only_short_count = sum(1 for item in items_raw if item["density_score"] == 0.0)
 
-            if not uri or not indexed_at:
-                skipped_by_reason["invalid_fields"] += 1
-                continue
+        # === QUERY 2: lang:ja #<stable_hashtag> (STABLETAG) ===
+        current_hashtag, next_state = get_current_hashtag(statistics_bucket, top_n=5)
+        items_stablehashtag = []
+        stablehashtag_posts_count = 0
 
-            # Skip posts with labels (moderation)
-            if has_any_labels(post):
-                print(f"[FILTER] Moderation: {uri}")
-                skipped_by_reason["moderation_labels"] += 1
-                continue
+        if current_hashtag:
+            search_query_2 = f"lang:ja #{current_hashtag}"
+            try:
+                res_2 = search_posts_with_retry(client, search_query_2, search_config, max_retries=3)
+                posts_2 = getattr(res_2, "posts", []) or []
+                print(f"[QUERY2] Found {len(posts_2)} posts for: {search_query_2}")
 
-            # Extract text and post attributes
-            record = getattr(post, "record", None)
-            text = getattr(record, "text", "") if record else ""
+                items_stablehashtag, _, _, _, _ = process_posts_with_filters(posts_2, feed_type="stablehashtag")
+                stablehashtag_posts_count = len(items_stablehashtag)
 
-            # Verify Japanese with fastText
-            if not is_japanese(text):
-                print(f"[FILTER] Non-Japanese: {uri}")
-                skipped_by_reason["non_japanese"] += 1
-                continue
+                # Update rotation state
+                save_rotation_state(statistics_bucket, next_state)
+            except Exception as e:
+                print(f"[QUERY2] Error fetching stablehashtag posts: {e}")
+        else:
+            print("[QUERY2] No current hashtag available, skipping stablehashtag query")
 
-            # Extract post attributes
-            is_reply = bool(getattr(record, "reply", None)) if record else False
-
-            # Check for images and videos in embed
-            has_images = False
-            embed = getattr(record, "embed", None) if record else None
-            if embed:
-                # Check for images (including GIFs) or videos
-                images = getattr(embed, "images", None)
-                video = getattr(embed, "video", None)
-                has_images = bool(images or video)
-
-            # Extract hashtag count and names from facets
-            hashtag_count = extract_hashtag_count(record)
-            hashtags = extract_hashtags(record)
-
-            # Skip posts with 5+ hashtags (spam detection)
-            # Rationale: Posts with 5+ hashtags are considered spam/low-quality
-            # - Excessive hashtags indicate artificial reach-seeking behavior
-            # - Natural Japanese posts typically use 1-3 hashtags
-            # - 5+ hashtags = search optimization + low semantic value
-            # - Incompatible with "calm and safe" feed goal
-            if hashtag_count >= 5:
-                print(f"[FILTER] Spam (hashtags >= 5): {uri} ({hashtag_count} hashtags)")
-                skipped_by_reason["spam_hashtags"] += 1
-                continue
-
-            # Calculate density score with attributes
-            density_score, badword_count, matched_words = calculate_density_score(text, is_reply=is_reply, has_images=has_images, hashtag_count=hashtag_count)
-
-            # Record badword statistics
-            if badword_count > 0:
-                badword_stats["total_posts_with_badwords"] += 1
-                badword_stats["total_badword_matches"] += badword_count
-                # Track distribution of matches per post
-                key = str(badword_count)
-                badword_stats["badword_distribution"][key] = badword_stats["badword_distribution"].get(key, 0) + 1
-                # Track which words were matched
-                for word in matched_words:
-                    badword_stats["matched_words"][word] = badword_stats["matched_words"].get(word, 0) + 1
-
-            # Count text-only short posts (density_score = 0.0)
-            if density_score == 0.0:
-                text_only_short_count += 1
-
-            # Convert indexed_at to timestamp
-            ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))
-
-            items.append({
-                "uri": uri,
-                "ts": ts,
-                "density_score": density_score,
-                "hashtags": hashtags,
-            })
-
-            # Collect text and base forms if it will go to Dense feed
-            if density_score >= get_density_threshold():
-                # Escape newlines for single-line format
-                text_escaped = text.replace("\n", "\\n").replace("\r", "\\r")
-                dense_texts.append(text_escaped)
-
-                # Extract base forms (見出し語) for badword dictionary creation
-                try:
-                    base_forms = extract_base_forms(text)
-                    dense_base_forms.extend(base_forms)
-                except Exception as e:
-                    print(f"[EXTRACT_BASE_FORMS_ERROR] {uri}: {e}")
-
-            print(f"[ADDED] {uri} (density={density_score:.3f})")
+        # Combine items for statistics (raw+stablehashtag)
+        items = items_raw + items_stablehashtag
 
         print(f"\n=== Processing Summary ===")
-        print(f"Total fetched: {len(posts)}")
+        print(f"Total fetched (raw+stablehashtag): {len(posts_1) + stablehashtag_posts_count}")
+        print(f"  - Raw posts: {len(posts_1)}")
+        print(f"  - Stabletag posts: {stablehashtag_posts_count}")
         print(f"  - Invalid fields: {skipped_by_reason['invalid_fields']}")
         print(f"  - Moderation labels: {skipped_by_reason['moderation_labels']}")
         print(f"  - Non-Japanese: {skipped_by_reason['non_japanese']}")
         print(f"  - Spam hashtags (5+): {skipped_by_reason['spam_hashtags']}")
-        print(f"  - Passed filters: {len(items)}")
+        print(f"  - Passed filters: {len(items_raw + items_stablehashtag)}")
 
         # Badword statistics
         print(f"\n=== Badword Analysis ===")
@@ -417,7 +526,7 @@ def lambda_handler(event, context):
         iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
         # Calculate rates
-        total_fetched = len(posts)
+        total_fetched = len(posts_1) + stablehashtag_posts_count
         passed_filters = len(items)
         dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
 
@@ -504,10 +613,11 @@ def lambda_handler(event, context):
             pass
 
         # Invoke Store Lambda asynchronously
-        if items:
+        if items_raw or items_stablehashtag:
             lambda_client = boto3.client("lambda")
             payload = {
-                "items": items,
+                "items_raw": items_raw,
+                "items_stablehashtag": items_stablehashtag,
                 "batch_stats": stats_payload,
                 "dense_texts": dense_texts,
                 "dense_base_forms": dense_base_forms,
@@ -522,7 +632,8 @@ def lambda_handler(event, context):
             )
 
         return {
-            "fetched": len(items),
+            "fetched_raw": len(items_raw),
+            "fetched_stablehashtag": stablehashtag_posts_count,
             "skipped": total_skipped,
             "dense_posts": len(dense_texts),
             "total_base_forms": len(dense_base_forms),

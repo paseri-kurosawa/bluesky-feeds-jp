@@ -17,6 +17,7 @@ BSKY_APP_PASSWORD = "pass-word-bsky-abcd"
 FEED_RKEYS = [
     "japanese-raw-feed",
     "japanese-dense-feed",
+    "japanese-stablehashtag-feed",
 ]
 
 def delete_feeds():

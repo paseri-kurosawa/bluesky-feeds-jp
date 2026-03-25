@@ -43,6 +43,15 @@ FEEDS = [
 ※アルゴリズムは随時改善します''',
         "avatar": "feed_icon_green.png",
     },
+    {
+        "rkey": "japanese-stablehashtag-feed",
+        "displayName": "Japanese Stable Hashtags",
+        "description": '''日本語の[安定ハッシュタグ中心]トレンドフィードです。
+中期的に使用されているハッシュタグを軸に構成します。
+
+※アルゴリズムは随時改善します''',
+        "avatar": "feed_icon_green.png",
+    },
 ]
 
 def publish_feeds():
