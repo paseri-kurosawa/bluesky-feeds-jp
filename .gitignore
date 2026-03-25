@@ -25,6 +25,9 @@ cdk.context.json
 # Script work directory
 script/work/
 
+# Dashboard build output
+dist/
+
 # Documentation files (except README.md)
 *.md
 !README.md
