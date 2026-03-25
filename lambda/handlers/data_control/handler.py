@@ -590,7 +590,7 @@ def save_hashtag_batch(bucket, hashtags):
 
 def backfill_hashtag_daily(bucket):
     """
-    Check if today's daily file exists. If not, aggregate batch files and create it.
+    Check if yesterday's daily file exists. If not, aggregate batch files and create it.
     Also ensures previous day's daily file exists (backfill from batches).
 
     Args:
@@ -603,49 +603,47 @@ def backfill_hashtag_daily(bucket):
         yesterday_key = f"hashtags/daily/{yesterday_str}.json"
 
         # Check if yesterday's file exists
+        yesterday_exists = False
         try:
             s3_client.head_object(Bucket=bucket, Key=yesterday_key)
-            print(f"[HASHTAG] Yesterday's daily file exists: {yesterday_key}")
-            return
-        except s3_client.exceptions.NoSuchKey:
-            pass
+            yesterday_exists = True
         except Exception as e:
-            print(f"[HASHTAG] Error checking yesterday's file: {str(e)}")
-            return
+            pass
 
-        # Yesterday's file is missing - restore from batch files
-        prefix = f"hashtags/batch/{yesterday_str}_"
-        paginator = s3_client.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+        if not yesterday_exists:
+            # Yesterday's file is missing - restore from batch files
+            prefix = f"hashtags/batch/{yesterday_str}_"
+            paginator = s3_client.get_paginator("list_objects_v2")
+            pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
 
-        aggregated = {}
-        batch_count = 0
-        for page in pages:
-            if "Contents" not in page:
-                continue
+            aggregated = {}
+            batch_count = 0
+            for page in pages:
+                if "Contents" not in page:
+                    continue
 
-            for obj in page["Contents"]:
-                key = obj["Key"]
-                response = s3_client.get_object(Bucket=bucket, Key=key)
-                batch_data = json.loads(response["Body"].read().decode("utf-8"))
+                for obj in page["Contents"]:
+                    key = obj["Key"]
+                    response = s3_client.get_object(Bucket=bucket, Key=key)
+                    batch_data = json.loads(response["Body"].read().decode("utf-8"))
 
-                # Aggregate hashtags
-                for tag, count in batch_data.items():
-                    aggregated[tag] = aggregated.get(tag, 0) + count
+                    # Aggregate hashtags
+                    for tag, count in batch_data.items():
+                        aggregated[tag] = aggregated.get(tag, 0) + count
 
-                batch_count += 1
+                    batch_count += 1
 
-        if aggregated:
-            # Restore yesterday's daily file
-            s3_client.put_object(
-                Bucket=bucket,
-                Key=yesterday_key,
-                Body=json.dumps(aggregated, ensure_ascii=False, indent=2),
-                ContentType="application/json; charset=utf-8"
-            )
-            print(f"[HASHTAG] Restored yesterday's daily file from {batch_count} batches: {yesterday_key}")
-        else:
-            print(f"[HASHTAG] No batch files found for yesterday")
+            if aggregated:
+                # Restore yesterday's daily file
+                s3_client.put_object(
+                    Bucket=bucket,
+                    Key=yesterday_key,
+                    Body=json.dumps(aggregated, ensure_ascii=False, indent=2),
+                    ContentType="application/json; charset=utf-8"
+                )
+                print(f"[HASHTAG] Restored yesterday's daily file from {batch_count} batches: {yesterday_key}")
+            else:
+                print(f"[HASHTAG] No batch files found for yesterday")
 
     except Exception as e:
         print(f"[HASHTAG ERROR] Failed to backfill hashtag daily: {str(e)}")
