@@ -473,7 +473,7 @@ def lambda_handler(event, context):
         text_only_short_count = sum(1 for item in items_raw if item["density_score"] == 0.0)
 
         # === QUERY 2: lang:ja #<stable_hashtag> (STABLETAG) ===
-        current_hashtag, next_state = get_current_hashtag(statistics_bucket, top_n=5)
+        current_hashtag, next_state = get_current_hashtag(statistics_bucket)
         items_stablehashtag = []
         stablehashtag_posts_count = 0
 
