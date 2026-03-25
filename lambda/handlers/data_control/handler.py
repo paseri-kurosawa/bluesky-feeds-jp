@@ -343,6 +343,16 @@ def backfill_previous_day(bucket, getfeed_stats):
                         Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
                         ContentType="application/json; charset=utf-8"
                     )
+
+                    # Save processing_trends to components/processing_trends.json
+                    processing_trends_key = "components/processing_trends.json"
+                    s3_client.put_object(
+                        Bucket=bucket,
+                        Key=processing_trends_key,
+                        Body=json.dumps(dashboard_data.get("daily", []), ensure_ascii=False, indent=2),
+                        ContentType="application/json; charset=utf-8"
+                    )
+                    print(f"[S3] Updated processing_trends to {processing_trends_key}")
     except Exception as e:
         pass
 
@@ -794,6 +804,16 @@ def save_stats_to_s3(batch_stats):
             ContentType="application/json; charset=utf-8"
         )
         print(f"[S3] Updated dashboard.json with latest stats")
+
+        # Save processing_trends to components/processing_trends.json
+        processing_trends_key = "components/processing_trends.json"
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=processing_trends_key,
+            Body=json.dumps(dashboard_data.get("daily", []), ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Updated processing_trends to {processing_trends_key}")
 
         return s3_key
     except Exception as e:
