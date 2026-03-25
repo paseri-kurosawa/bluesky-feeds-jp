@@ -564,6 +564,93 @@ def extract_stable_hashtags(bucket, days=30, top_n=10):
         return []
 
 
+def save_hashtag_batch(bucket, hashtags):
+    """
+    Save hashtag batch file to S3.
+
+    Args:
+        bucket: S3 bucket name
+        hashtags: Dict of {tag: count}
+    """
+    try:
+        now = get_jst_now()
+        timestamp = now.strftime("%Y-%m-%d_%H:%M")
+        s3_key = f"hashtags/batch/{timestamp}.json"
+
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=json.dumps(hashtags, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[HASHTAG] Saved batch to {s3_key}")
+    except Exception as e:
+        print(f"[HASHTAG ERROR] Failed to save hashtag batch: {str(e)}")
+
+
+def backfill_hashtag_daily(bucket):
+    """
+    Check if today's daily file exists. If not, aggregate batch files and create it.
+    Also ensures previous day's daily file exists (backfill from batches).
+
+    Args:
+        bucket: S3 bucket name
+    """
+    try:
+        now = get_jst_now()
+        yesterday = now - timedelta(days=1)
+        yesterday_str = yesterday.strftime("%Y-%m-%d")
+        yesterday_key = f"hashtags/daily/{yesterday_str}.json"
+
+        # Check if yesterday's file exists
+        try:
+            s3_client.head_object(Bucket=bucket, Key=yesterday_key)
+            print(f"[HASHTAG] Yesterday's daily file exists: {yesterday_key}")
+            return
+        except s3_client.exceptions.NoSuchKey:
+            pass
+        except Exception as e:
+            print(f"[HASHTAG] Error checking yesterday's file: {str(e)}")
+            return
+
+        # Yesterday's file is missing - restore from batch files
+        prefix = f"hashtags/batch/{yesterday_str}_"
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+
+        aggregated = {}
+        batch_count = 0
+        for page in pages:
+            if "Contents" not in page:
+                continue
+
+            for obj in page["Contents"]:
+                key = obj["Key"]
+                response = s3_client.get_object(Bucket=bucket, Key=key)
+                batch_data = json.loads(response["Body"].read().decode("utf-8"))
+
+                # Aggregate hashtags
+                for tag, count in batch_data.items():
+                    aggregated[tag] = aggregated.get(tag, 0) + count
+
+                batch_count += 1
+
+        if aggregated:
+            # Restore yesterday's daily file
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=yesterday_key,
+                Body=json.dumps(aggregated, ensure_ascii=False, indent=2),
+                ContentType="application/json; charset=utf-8"
+            )
+            print(f"[HASHTAG] Restored yesterday's daily file from {batch_count} batches: {yesterday_key}")
+        else:
+            print(f"[HASHTAG] No batch files found for yesterday")
+
+    except Exception as e:
+        print(f"[HASHTAG ERROR] Failed to backfill hashtag daily: {str(e)}")
+
+
 # === Responsibility 3: Save Statistics to S3 ===
 def save_stats_to_s3(batch_stats):
     """
@@ -591,8 +678,8 @@ def save_stats_to_s3(batch_stats):
         # Extract stable hashtags for dashboard
         stable_hashtags = extract_stable_hashtags(STATISTICS_BUCKET, days=30, top_n=10)
 
-        # Prepare dashboard stats: remove top_hashtags, add stable_hashtags
-        dashboard_stats = {k: v for k, v in batch_stats.items() if k not in ["top_hashtags", "top_hashtags_1h"]}
+        # Prepare dashboard stats: remove only top_hashtags (ALL), keep top_hashtags_1h (1H trend), add stable_hashtags
+        dashboard_stats = {k: v for k, v in batch_stats.items() if k not in ["top_hashtags"]}
         dashboard_stats["stable_hashtags"] = stable_hashtags
 
         # Update dashboard.json
