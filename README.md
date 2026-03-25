@@ -57,14 +57,10 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
 統計ログはS3 (`bluesky-feed-dashboard-878311109818/stats/`) に3段階で保存：
 
 - `batch/stats_YYYYMMDD_HHMMSS.json`: 各実行分の生統計
-- `daily/stats-YYYY-MM-DD.json`: 日次集計（複数バッチを加算集計）
-- `summary/dashboard.json`: ダッシュボード用の統合ファイル（最新・日次データ両方含む）
+- `daily/stats-YYYY-MM-DD.json`: 日次集計（複数バッチを加算集計、前日分のみ）
+- `summary/dashboard.json`: ダッシュボード用の統合ファイル（最新バッチ + 前日分の日次データ）
 
-### 統計インデックス更新
-ファイルリストインデックスを手動で更新（オプション）：
-```bash
-./scripts/update-stats-index.sh
-```
+統計更新は自動化されており、手動更新は不要です。
 
 ## アーキテクチャ
 
@@ -82,15 +78,18 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
   - DataControl: スコアリング結果をValkeyに格納 + 統計JSON生成
 - **Valkey Serverless**: キャッシュ層（メモリ内スコア保持）
 - **S3**:
-  - `bluesky-feed-badword-analysis-*`: バッドワード辞書置き場
-    - `badwords/dictionary.txt`: バッドワード辞書（無期限保持）
+  - `bluesky-feed-badword-analysis-*`: バッドワード辞書・分析ログ置き場
+    - `badword-analysis/dense_posts_YYYYMMDD_HHMMSS.txt`: 各実行の密度スコア分析ログ
   - `bluesky-feed-dashboard-*`: ダッシュボード & 統計データ一元化
-    - `stats/batch/`: 各実行の生統計JSON
-    - `stats/daily/`: 日次集計JSON（複数バッチ加算）
-    - `stats/summary/`: ダッシュボード用統合ファイル
+    - `stats/batch/stats_YYYYMMDD_HHMMSS.json`: 各実行の統計JSON
+    - `stats/daily/stats-YYYY-MM-DD.json`: 日次集計JSON
+    - `components/`: ダッシュボードコンポーネント用JSON（latest_report, processing_trends 等）
+    - `hashtags/batch/`: 各実行のハッシュタグ分析JSON
+    - `hashtags/daily/`: ハッシュタグ日次集計
+    - `hashtags/summary/stable_hashtags.json`: ハッシュタグリスト
     - `index.html`, `assets/`: React SPA ファイル
-- **VPC**: Lambda間通信の分離・セキュリティ確保
-- **CloudWatch Logs**: 実行ログとメトリクス
+- **VPC**: Lambda関数間の通信と Valkey への安全な接続確保
+- **CloudWatch Logs**: Lambda実行ログとメトリクス監視
 
 ## 開発・デプロイ
 
@@ -148,7 +147,8 @@ CDK_DEFAULT_REGION=ap-northeast-1
 │   ├── vite.config.js
 │   └── package.json
 ├── scripts/
-│   ├── update-stats-index.sh        # S3ファイルリストインデックス更新
+│   ├── delete_feeds.py              # フィード削除ツール
+│   ├── publish_feeds.py             # フィード公開
 │   └── ...
 ├── badwords/
 │   └── dictionary.txt               # バッドワード辞書（1行1単語）
