@@ -36,6 +36,7 @@ def get_batch_spread_seconds():
 
 # === AWS Clients ===
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
 STATISTICS_BUCKET = os.environ.get("STATISTICS_BUCKET", "")
 MAX_ITEMS_RAW = 5000
 MAX_ITEMS_DENSE = 2000
@@ -846,7 +847,7 @@ def lambda_handler(event, context):
     # === OPTIONAL: Save badword texts to S3 ===
     try:
         if dense_texts or dense_base_forms:
-            save_badword_texts_to_s3(STATISTICS_BUCKET, dense_texts, dense_base_forms)
+            save_badword_texts_to_s3(S3_BUCKET, dense_texts, dense_base_forms)
     except Exception as e:
         print(f"[OPTIONAL] Badword text save failed (non-critical): {str(e)}")
         import traceback

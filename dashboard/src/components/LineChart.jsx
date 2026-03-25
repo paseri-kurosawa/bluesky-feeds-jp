@@ -31,6 +31,7 @@ export function LineChart({ data }) {
     date: d.date,
     totalFetched: d.processing_summary.total_fetched,
     passed: d.processing_summary.passed_filters,
+    densePosts: d.dense_feed.dense_posts,
     denseRate: d.dense_feed.dense_rate,
     badwordRate: d.badword_analysis.hit_rate,
     getfeedCalls: d.getfeed_stats?.total_invocations ?? 0
@@ -44,8 +45,8 @@ export function LineChart({ data }) {
       {
         label: 'Total Fetched',
         data: metrics.map(m => m.totalFetched),
-        borderColor: '#667eea',
-        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+        borderColor: '#4b5563',
+        backgroundColor: 'rgba(75, 85, 99, 0.1)',
         tension: 0.4,
         fill: true
       },
@@ -54,6 +55,14 @@ export function LineChart({ data }) {
         data: metrics.map(m => m.passed),
         borderColor: '#22c55e',
         backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        tension: 0.4,
+        fill: true
+      },
+      {
+        label: 'Dense Posts',
+        data: metrics.map(m => m.densePosts),
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
         tension: 0.4,
         fill: true
       },

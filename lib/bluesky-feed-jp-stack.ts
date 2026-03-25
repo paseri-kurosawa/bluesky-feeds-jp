@@ -165,6 +165,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       securityGroups: [lambdaSecurityGroup],
       environment: {
         VALKEY_ENDPOINT: valkeyEndpoint,
+        S3_BUCKET: badwordBucket.bucketName,
         STATISTICS_BUCKET: dashboardBucket.bucketName,
       },
     });
@@ -192,6 +193,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     // Grant DataControl Lambda permission to write stats to S3
     dashboardBucket.grantReadWrite(dataControlLambda);
+    badwordBucket.grantWrite(dataControlLambda);
 
 
     // === HTTP API Gateway ===
