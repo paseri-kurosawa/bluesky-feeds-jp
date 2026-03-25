@@ -514,10 +514,61 @@ def aggregate_stats(batch_stats):
     return top_hashtags, enriched_stats
 
 
+def extract_stable_hashtags(bucket, days=30, top_n=10):
+    """
+    Extract TOP stable hashtags from past N days of daily files.
+    (Reads from hashtags/daily/ instead of batch/ for TTL consistency)
+
+    Args:
+        bucket: S3 bucket name
+        days: Number of days to analyze (default 30)
+        top_n: Number of top hashtags to return (default 10)
+
+    Returns:
+        List of dicts [{"tag": "...", "count": ...}, ...]
+    """
+    try:
+        now = get_jst_now()
+        aggregated_all = {}
+
+        # Aggregate daily files for past N days
+        for days_ago in range(days, -1, -1):
+            date = now - timedelta(days=days_ago)
+            date_str = date.strftime("%Y-%m-%d")
+            daily_key = f"hashtags/daily/{date_str}.json"
+
+            try:
+                response = s3_client.get_object(Bucket=bucket, Key=daily_key)
+                daily_data = json.loads(response["Body"].read().decode("utf-8"))
+
+                # Aggregate all hashtags
+                for tag, count in daily_data.items():
+                    aggregated_all[tag] = aggregated_all.get(tag, 0) + count
+            except Exception as e:
+                # Daily file may not exist for older dates, continue
+                pass
+
+        # Sort by count descending and get top N
+        sorted_hashtags = sorted(
+            aggregated_all.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:top_n]
+
+        return [
+            {"tag": tag, "count": count}
+            for tag, count in sorted_hashtags
+        ]
+    except Exception as e:
+        print(f"[HASHTAG ERROR] Failed to extract stable hashtags: {str(e)}")
+        return []
+
+
 # === Responsibility 3: Save Statistics to S3 ===
 def save_stats_to_s3(batch_stats):
     """
     Save batch statistics to S3 and update dashboard.json.
+    Replaces top_hashtags with stable_hashtags (from 30-day analysis).
 
     Raises: Exception on failure
     """
@@ -537,6 +588,13 @@ def save_stats_to_s3(batch_stats):
         )
         print(f"[S3] Saved stats to {s3_key}")
 
+        # Extract stable hashtags for dashboard
+        stable_hashtags = extract_stable_hashtags(STATISTICS_BUCKET, days=30, top_n=10)
+
+        # Prepare dashboard stats: remove top_hashtags, add stable_hashtags
+        dashboard_stats = {k: v for k, v in batch_stats.items() if k not in ["top_hashtags", "top_hashtags_1h"]}
+        dashboard_stats["stable_hashtags"] = stable_hashtags
+
         # Update dashboard.json
         dashboard_key = "stats/summary/dashboard.json"
         try:
@@ -546,13 +604,13 @@ def save_stats_to_s3(batch_stats):
             # Create new dashboard if doesn't exist
             dashboard_data = {
                 "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "latest": batch_stats,
+                "latest": dashboard_stats,
                 "daily": []
             }
 
         # Update latest section
         dashboard_data["generated_at"] = get_jst_now().strftime("%Y-%m-%d %H:%M:%S")
-        dashboard_data["latest"] = batch_stats
+        dashboard_data["latest"] = dashboard_stats
 
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
@@ -560,7 +618,7 @@ def save_stats_to_s3(batch_stats):
             Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Updated dashboard.json latest section")
+        print(f"[S3] Updated dashboard.json with stable_hashtags")
 
         return s3_key
     except Exception as e:
@@ -589,6 +647,7 @@ def lambda_handler(event, context):
     dense_texts = event.get("dense_texts", [])
     dense_base_forms = event.get("dense_base_forms", [])
     getfeed_stats = event.get("getfeed_stats", {"total_invocations": 0})
+    hashtags = event.get("hashtags", {})
 
     if not items:
         return {"stored_raw": 0, "stored_dense": 0, "note": "no items"}
@@ -632,6 +691,23 @@ def lambda_handler(event, context):
         backfill_previous_day(STATISTICS_BUCKET, getfeed_stats)
     except Exception as e:
         print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    # === OPTIONAL: Save batch hashtags ===
+    try:
+        if hashtags:
+            save_hashtag_batch(STATISTICS_BUCKET, hashtags)
+    except Exception as e:
+        print(f"[OPTIONAL] Hashtag batch save failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    # === OPTIONAL: Backfill hashtag daily if missing ===
+    try:
+        backfill_hashtag_daily(STATISTICS_BUCKET)
+    except Exception as e:
+        print(f"[OPTIONAL] Hashtag daily backfill failed (non-critical): {str(e)}")
         import traceback
         traceback.print_exc()
 

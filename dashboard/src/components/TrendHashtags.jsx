@@ -28,7 +28,7 @@ export function TrendHashtags({ data }) {
       <tbody>
         {hashtags.map((item, idx) => (
           <tr key={idx}>
-            <td className="rank">{item.rank}</td>
+            <td className="rank">{item.rank || idx + 1}</td>
             <td className="hashtag">#{item.tag}</td>
             <td className="count">{item.count}</td>
           </tr>
