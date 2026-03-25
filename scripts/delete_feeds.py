@@ -6,12 +6,33 @@ Removes feed generator records for both raw and dense feeds.
 
 import os
 import sys
+from dotenv import load_dotenv
 from atproto import Client
 from atproto_client.models.com.atproto.repo.delete_record import Data as DeleteData
 
-# Bluesky credentials for the old account
-BSKY_HANDLE = "example.bsky.social"
-BSKY_APP_PASSWORD = "pass-word-bsky-abcd"
+# Load environment variables from .env
+load_dotenv()
+
+BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
+BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
+
+# If not in .env, try to load from AWS Secrets Manager
+if not BSKY_HANDLE or not BSKY_APP_PASSWORD:
+    import boto3
+    import json
+    try:
+        print("Loading Bluesky credentials from AWS Secrets Manager...")
+        sm_client = boto3.client("secretsmanager", region_name="ap-northeast-1")
+        response = sm_client.get_secret_value(SecretId="bluesky-feed-jp/credentials")
+        secret = json.loads(response["SecretString"])
+        BSKY_HANDLE = secret.get("handle", BSKY_HANDLE)
+        BSKY_APP_PASSWORD = secret.get("appPassword", BSKY_APP_PASSWORD)
+    except Exception as e:
+        print(f"❌ Error loading from Secrets Manager: {e}")
+
+if not BSKY_HANDLE or not BSKY_APP_PASSWORD:
+    print("❌ Error: BSKY_HANDLE and BSKY_APP_PASSWORD must be set in .env or Secrets Manager")
+    sys.exit(1)
 
 # Feed rkeys to delete
 FEED_RKEYS = [

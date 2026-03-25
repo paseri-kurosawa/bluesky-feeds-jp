@@ -185,7 +185,10 @@ def lambda_handler(event, context):
             "statusCode": 200,
             "headers": {
                 "Content-Type": "application/json",
-                "charset": "utf-8"
+                "charset": "utf-8",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
             },
             "body": json.dumps(response, ensure_ascii=False)
         }
@@ -196,5 +199,11 @@ def lambda_handler(event, context):
         print(f"[ERROR] {error_msg}")
         return {
             "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            },
             "body": json.dumps({"error": str(e)})
         }

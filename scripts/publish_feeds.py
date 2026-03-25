@@ -19,8 +19,22 @@ BSKY_HANDLE = os.environ.get("BSKY_HANDLE", "")
 BSKY_APP_PASSWORD = os.environ.get("BSKY_APP_PASSWORD", "")
 FEED_DID = os.environ.get("FEED_DID", "")
 
+# If not in .env, try to load from AWS Secrets Manager
+if not BSKY_HANDLE or not BSKY_APP_PASSWORD:
+    import boto3
+    import json
+    try:
+        print("Loading Bluesky credentials from AWS Secrets Manager...")
+        sm_client = boto3.client("secretsmanager", region_name="ap-northeast-1")
+        response = sm_client.get_secret_value(SecretId="bluesky-feed-jp/credentials")
+        secret = json.loads(response["SecretString"])
+        BSKY_HANDLE = secret.get("handle", BSKY_HANDLE)
+        BSKY_APP_PASSWORD = secret.get("appPassword", BSKY_APP_PASSWORD)
+    except Exception as e:
+        print(f"❌ Error loading from Secrets Manager: {e}")
+
 if not BSKY_HANDLE or not BSKY_APP_PASSWORD or not FEED_DID:
-    print("❌ Error: BSKY_HANDLE, BSKY_APP_PASSWORD, and FEED_DID must be set in .env")
+    print("❌ Error: BSKY_HANDLE, BSKY_APP_PASSWORD, and FEED_DID must be set in .env or Secrets Manager")
     sys.exit(1)
 
 # Feed configuration
@@ -39,15 +53,6 @@ FEEDS = [
         "displayName": "Japanese Dense",
         "description": '''日本語の[時系列順]フィードです。
 [高品質／安全／平穏]なポストを重視します。
-
-※アルゴリズムは随時改善します''',
-        "avatar": "feed_icon_green.png",
-    },
-    {
-        "rkey": "japanese-stablehashtag-feed",
-        "displayName": "Japanese Stable Hashtags",
-        "description": '''日本語の[安定ハッシュタグ中心]トレンドフィードです。
-中期的に使用されているハッシュタグを軸に構成します。
 
 ※アルゴリズムは随時改善します''',
         "avatar": "feed_icon_green.png",

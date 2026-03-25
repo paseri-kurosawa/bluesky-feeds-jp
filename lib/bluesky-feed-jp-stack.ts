@@ -132,20 +132,8 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       },
     });
 
-    // === S3 Bucket for Badword Analysis ===
-    const badwordBucket = new s3.Bucket(this, 'BadwordAnalysisBucket', {
-      bucketName: `bluesky-feed-badword-analysis-${env.CDK_DEFAULT_ACCOUNT}`,
-      versioned: false,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      lifecycleRules: [
-        {
-          // Delete badword-analysis files after 3 days (intermediate analysis files)
-          prefix: 'badword-analysis/',
-          expiration: cdk.Duration.days(3),
-        },
-      ],
-    });
+    // === S3 Bucket for Badword Analysis (reference existing bucket) ===
+    const badwordBucket = s3.Bucket.fromBucketName(this, 'BadwordAnalysisBucket', `bluesky-feed-badword-analysis-${env.CDK_DEFAULT_ACCOUNT}`);
 
     // === S3 Bucket for Dashboard (reference existing bucket) ===
     const dashboardBucket = s3.Bucket.fromBucketName(this, 'DashboardBucketRef', `bluesky-feed-dashboard-${env.CDK_DEFAULT_ACCOUNT}`);

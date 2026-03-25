@@ -613,7 +613,11 @@ def lambda_handler(event, context):
             pass
 
         # Invoke Store Lambda asynchronously
+        print(f"[DEBUG_INVOKE] STORE_FUNCTION_NAME={STORE_FUNCTION_NAME}")
+        print(f"[DEBUG_INVOKE] items_raw={len(items_raw)}, items_stablehashtag={len(items_stablehashtag)}")
+
         if items_raw or items_stablehashtag:
+            print(f"[DEBUG_INVOKE] Attempting to invoke DataControl Lambda...")
             lambda_client = boto3.client("lambda")
             payload = {
                 "items_raw": items_raw,
@@ -625,11 +629,20 @@ def lambda_handler(event, context):
                 "hashtags": hashtag_counts
             }
 
-            response = lambda_client.invoke(
-                FunctionName=STORE_FUNCTION_NAME,
-                InvocationType="Event",  # Asynchronous
-                Payload=json.dumps(payload),
-            )
+            try:
+                response = lambda_client.invoke(
+                    FunctionName=STORE_FUNCTION_NAME,
+                    InvocationType="Event",  # Asynchronous
+                    Payload=json.dumps(payload),
+                )
+                print(f"[DEBUG_INVOKE] SUCCESS! StatusCode={response['StatusCode']}, RequestId={response.get('ResponseMetadata', {}).get('RequestId', 'N/A')}")
+            except Exception as invoke_error:
+                print(f"[DEBUG_INVOKE] ERROR: {str(invoke_error)}")
+                import traceback
+                traceback.print_exc()
+                raise
+        else:
+            print(f"[DEBUG_INVOKE] SKIPPED: No items to invoke")
 
         return {
             "fetched_raw": len(items_raw),
