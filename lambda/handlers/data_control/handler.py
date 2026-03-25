@@ -751,6 +751,32 @@ def lambda_handler(event, context):
     # === OPTIONAL: Aggregate statistics and save to S3 ===
     s3_saved = False
 
+    # === OPTIONAL: Save batch hashtags ===
+    try:
+        if hashtags:
+            save_hashtag_batch(STATISTICS_BUCKET, hashtags)
+    except Exception as e:
+        print(f"[OPTIONAL] Hashtag batch save failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    # === OPTIONAL: Backfill hashtag daily if missing (BEFORE dashboard update) ===
+    try:
+        backfill_hashtag_daily(STATISTICS_BUCKET)
+    except Exception as e:
+        print(f"[OPTIONAL] Hashtag daily backfill failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    # === OPTIONAL: Backfill previous day's daily stats if missing (BEFORE dashboard update) ===
+    try:
+        backfill_previous_day(STATISTICS_BUCKET, getfeed_stats)
+    except Exception as e:
+        print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    # === Now update dashboard (after all daily files are ready) ===
     if batch_stats:
         try:
             top_hashtags, enriched_stats = aggregate_stats(batch_stats)
@@ -768,31 +794,6 @@ def lambda_handler(event, context):
             save_badword_texts_to_s3(STATISTICS_BUCKET, dense_texts, dense_base_forms)
     except Exception as e:
         print(f"[OPTIONAL] Badword text save failed (non-critical): {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-    # === OPTIONAL: Backfill previous day's daily stats if missing ===
-    try:
-        backfill_previous_day(STATISTICS_BUCKET, getfeed_stats)
-    except Exception as e:
-        print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-    # === OPTIONAL: Save batch hashtags ===
-    try:
-        if hashtags:
-            save_hashtag_batch(STATISTICS_BUCKET, hashtags)
-    except Exception as e:
-        print(f"[OPTIONAL] Hashtag batch save failed (non-critical): {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-    # === OPTIONAL: Backfill hashtag daily if missing ===
-    try:
-        backfill_hashtag_daily(STATISTICS_BUCKET)
-    except Exception as e:
-        print(f"[OPTIONAL] Hashtag daily backfill failed (non-critical): {str(e)}")
         import traceback
         traceback.print_exc()
 
