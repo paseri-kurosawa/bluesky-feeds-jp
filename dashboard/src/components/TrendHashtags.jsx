@@ -13,8 +13,8 @@ export function TrendHashtags({ data }) {
   useEffect(() => {
     const fetchTrendData = async () => {
       try {
-        // Fetch stable hashtags
-        const stableUrl = `${bucketUrl}/components/stable_hashtags.json`
+        // Fetch stable hashtags (from raw posts)
+        const stableUrl = `${bucketUrl}/components/stable_hashtags_from_raw_posts.json`
         const stableResponse = await fetch(stableUrl)
         let stableData = []
         let timestamp = null
@@ -24,8 +24,8 @@ export function TrendHashtags({ data }) {
           timestamp = json.generated_at
         }
 
-        // Fetch top hashtags 1H
-        const trendUrl = `${bucketUrl}/components/top_hashtags_1h.json`
+        // Fetch top hashtags 1H (from raw posts)
+        const trendUrl = `${bucketUrl}/components/top_hashtags_1h_from_raw_posts.json`
         const trendResponse = await fetch(trendUrl)
         let trendData = []
         if (trendResponse.ok) {

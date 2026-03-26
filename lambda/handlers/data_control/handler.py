@@ -289,7 +289,7 @@ def save_badword_texts_to_s3(bucket, dense_texts, dense_base_forms):
 def backfill_previous_day(bucket, getfeed_stats):
     """
     Check if previous day's daily stats exist. If not, backfill from batch files.
-    Updates dashboard.json with new daily entry.
+    Saves to stats/daily/ and updates components/processing_trends.json.
     """
     try:
         now = get_jst_now()
@@ -311,49 +311,42 @@ def backfill_previous_day(bucket, getfeed_stats):
             if yesterday_batches:
                 backfilled_entry = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches, getfeed_stats)
                 if backfilled_entry:
-                    # Save daily file for yesterday
+                    # Save daily file for yesterday to stats/daily/
                     s3_client.put_object(
                         Bucket=bucket,
                         Key=daily_key,
                         Body=json.dumps(backfilled_entry, ensure_ascii=False, indent=2),
                         ContentType="application/json; charset=utf-8"
                     )
+                    print(f"[S3] Saved backfilled daily stats to {daily_key}")
 
-                    # Update dashboard.json with new daily entry
-                    dashboard_key = "stats/summary/dashboard.json"
-                    try:
-                        response = s3_client.get_object(Bucket=bucket, Key=dashboard_key)
-                        dashboard_data = json.loads(response["Body"].read().decode("utf-8"))
-                    except s3_client.exceptions.NoSuchKey:
-                        dashboard_data = {
-                            "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "latest": None,
-                            "daily": []
-                        }
+                    # Aggregate all daily files and update components/processing_trends.json
+                    all_daily_files = list_batch_files_for_date(bucket, "2020-01-01")  # Get all files
+                    paginator = s3_client.get_paginator('list_objects_v2')
+                    pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/")
+                    daily_entries = []
+                    for page in pages:
+                        if 'Contents' in page:
+                            for obj in sorted(page['Contents'], key=lambda x: x['Key']):
+                                if obj['Key'].endswith('.json'):
+                                    try:
+                                        response = s3_client.get_object(Bucket=bucket, Key=obj['Key'])
+                                        daily_data = json.loads(response["Body"].read().decode("utf-8"))
+                                        daily_entries.append(daily_data)
+                                    except Exception as e:
+                                        print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
 
-                    # Add or update the backfilled entry in daily array
-                    dashboard_data["daily"] = [d for d in dashboard_data.get("daily", []) if d.get("date") != yesterday_date]
-                    dashboard_data["daily"].append(backfilled_entry)
-                    dashboard_data["daily"].sort(key=lambda x: x.get("date", ""))
-                    dashboard_data["generated_at"] = get_jst_now().strftime("%Y-%m-%d %H:%M:%S")
-
-                    s3_client.put_object(
-                        Bucket=bucket,
-                        Key=dashboard_key,
-                        Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
-                        ContentType="application/json; charset=utf-8"
-                    )
-
-                    # Save processing_trends to components/processing_trends.json
+                    # Update components/processing_trends.json
                     processing_trends_key = "components/processing_trends.json"
                     s3_client.put_object(
                         Bucket=bucket,
                         Key=processing_trends_key,
-                        Body=json.dumps(dashboard_data.get("daily", []), ensure_ascii=False, indent=2),
+                        Body=json.dumps(daily_entries, ensure_ascii=False, indent=2),
                         ContentType="application/json; charset=utf-8"
                     )
-                    print(f"[S3] Updated processing_trends to {processing_trends_key}")
+                    print(f"[S3] Updated processing_trends to {processing_trends_key} with {len(daily_entries)} entries")
     except Exception as e:
+        print(f"[BACKFILL] Error in backfill_previous_day: {str(e)}")
         pass
 
 
@@ -715,9 +708,9 @@ def backfill_hashtag_daily(bucket):
 
 
 # === Responsibility 3: Save Statistics to S3 ===
-def save_stats_to_s3(batch_stats):
+def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
     """
-    Save batch statistics to S3 and update dashboard.json.
+    Save batch statistics to S3 (separated by QUERY type) and update dashboard.
     Replaces top_hashtags with stable_hashtags (from 30-day analysis).
 
     Raises: Exception on failure
@@ -725,51 +718,64 @@ def save_stats_to_s3(batch_stats):
     if not STATISTICS_BUCKET:
         raise ValueError("STATISTICS_BUCKET environment variable not set")
 
-    timestamp = batch_stats.get("timestamp", get_jst_now().strftime("%Y%m%d_%H%M%S"))
-    s3_key = f"stats/batch/stats_{timestamp}.json"
+    timestamp_raw = batch_stats_raw.get("timestamp", get_jst_now().strftime("%Y%m%d_%H%M%S"))
+    timestamp_stablehashtag = batch_stats_stablehashtag.get("timestamp", get_jst_now().strftime("%Y%m%d_%H%M%S"))
+
+    s3_key_raw = f"stats/batch/raw-dense/stats_{timestamp_raw}.json"
+    s3_key_stablehashtag = f"stats/batch/stablehashtag/stats_{timestamp_stablehashtag}.json"
 
     try:
-        # Save batch stats file
+        # Save QUERY 1 batch stats file
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
-            Key=s3_key,
-            Body=json.dumps(batch_stats, ensure_ascii=False, indent=2),
+            Key=s3_key_raw,
+            Body=json.dumps(batch_stats_raw, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Saved stats to {s3_key}")
+        print(f"[S3] Saved raw-dense stats to {s3_key_raw}")
+
+        # Save QUERY 2 batch stats file
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=s3_key_stablehashtag,
+            Body=json.dumps(batch_stats_stablehashtag, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved stablehashtag stats to {s3_key_stablehashtag}")
 
         # Extract stable hashtags for dashboard
         stable_hashtags = extract_stable_hashtags(STATISTICS_BUCKET, days=30, top_n=10)
 
-        # Prepare dashboard stats: remove only top_hashtags (ALL), keep top_hashtags_1h (1H trend), add stable_hashtags
-        dashboard_stats = {k: v for k, v in batch_stats.items() if k not in ["top_hashtags"]}
-        dashboard_stats["stable_hashtags"] = stable_hashtags
+        # === Build separate dashboard stats for QUERY 1 and QUERY 2 ===
+        # Remove top_hashtags (archive), keep top_hashtags_1h (1H trend), add stable_hashtags
+        dashboard_stats_raw = {k: v for k, v in batch_stats_raw.items() if k not in ["top_hashtags"]}
+        dashboard_stats_raw["stable_hashtags"] = stable_hashtags
 
-        # Update dashboard.json
-        dashboard_key = "stats/summary/dashboard.json"
-        try:
-            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key=dashboard_key)
-            dashboard_data = json.loads(response["Body"].read().decode("utf-8"))
-        except s3_client.exceptions.NoSuchKey:
-            # Create new dashboard if doesn't exist
-            dashboard_data = {
-                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "latest": dashboard_stats,
-                "daily": []
-            }
+        dashboard_stats_stablehashtag = {k: v for k, v in batch_stats_stablehashtag.items() if k not in ["top_hashtags"]}
+        dashboard_stats_stablehashtag["stable_hashtags"] = stable_hashtags
 
-        # Save latest_report to components/latest_report.json
-        latest_report_key = "components/latest_report.json"
+        # Save latest_report_raw-dense to components/latest_report_raw-dense.json
+        latest_report_raw_key = "components/latest_report_raw-dense.json"
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
-            Key=latest_report_key,
-            Body=json.dumps(dashboard_stats, ensure_ascii=False, indent=2),
+            Key=latest_report_raw_key,
+            Body=json.dumps(dashboard_stats_raw, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Saved latest_report to {latest_report_key}")
+        print(f"[S3] Saved latest_report_raw-dense to {latest_report_raw_key}")
 
-        # Save stable_hashtags to components/stable_hashtags.json
-        stable_hashtags_key = "components/stable_hashtags.json"
+        # Save latest_report_stablehashtag to components/latest_report_stablehashtag.json
+        latest_report_stablehashtag_key = "components/latest_report_stablehashtag.json"
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=latest_report_stablehashtag_key,
+            Body=json.dumps(dashboard_stats_stablehashtag, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved latest_report_stablehashtag to {latest_report_stablehashtag_key}")
+
+        # Save stable_hashtags to components/stable_hashtags_from_raw_posts.json
+        stable_hashtags_key = "components/stable_hashtags_from_raw_posts.json"
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
             Key=stable_hashtags_key,
@@ -779,10 +785,10 @@ def save_stats_to_s3(batch_stats):
             }, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Saved stable_hashtags to {stable_hashtags_key}")
+        print(f"[S3] Saved stable_hashtags_from_raw_posts to {stable_hashtags_key}")
 
-        # Save top_hashtags_1h to components/top_hashtags_1h.json
-        top_hashtags_1h_key = "components/top_hashtags_1h.json"
+        # Save top_hashtags_1h to components/top_hashtags_1h_from_raw_posts.json
+        top_hashtags_1h_key = "components/top_hashtags_1h_from_raw_posts.json"
         top_hashtags_1h = dashboard_stats.get("top_hashtags_1h", [])
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
@@ -793,31 +799,45 @@ def save_stats_to_s3(batch_stats):
             }, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Saved top_hashtags_1h to {top_hashtags_1h_key}")
+        print(f"[S3] Saved top_hashtags_1h_from_raw_posts to {top_hashtags_1h_key}")
 
-        # Update latest section
-        dashboard_data["generated_at"] = get_jst_now().strftime("%Y-%m-%d %H:%M:%S")
-        dashboard_data["latest"] = dashboard_stats
+        # Aggregate all daily files and update components/processing_trends.json
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=STATISTICS_BUCKET, Prefix="stats/daily/")
+        daily_entries = []
+        for page in pages:
+            if 'Contents' in page:
+                for obj in sorted(page['Contents'], key=lambda x: x['Key']):
+                    if obj['Key'].endswith('.json'):
+                        try:
+                            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key=obj['Key'])
+                            daily_data = json.loads(response["Body"].read().decode("utf-8"))
+                            daily_entries.append(daily_data)
+                        except Exception as e:
+                            print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
 
+        # === Save processing_trends (aggregated daily stats) ===
+        # QUERY 1: processing_trends_raw-dense
+        processing_trends_raw_key = "components/processing_trends_raw-dense.json"
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
-            Key=dashboard_key,
-            Body=json.dumps(dashboard_data, ensure_ascii=False, indent=2),
+            Key=processing_trends_raw_key,
+            Body=json.dumps(daily_entries, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Updated dashboard.json with latest stats")
+        print(f"[S3] Updated processing_trends_raw-dense to {processing_trends_raw_key} with {len(daily_entries)} entries")
 
-        # Save processing_trends to components/processing_trends.json
-        processing_trends_key = "components/processing_trends.json"
+        # QUERY 2: processing_trends_stablehashtag (use same daily_entries for now)
+        processing_trends_stablehashtag_key = "components/processing_trends_stablehashtag.json"
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
-            Key=processing_trends_key,
-            Body=json.dumps(dashboard_data.get("daily", []), ensure_ascii=False, indent=2),
+            Key=processing_trends_stablehashtag_key,
+            Body=json.dumps(daily_entries, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
-        print(f"[S3] Updated processing_trends to {processing_trends_key}")
+        print(f"[S3] Updated processing_trends_stablehashtag to {processing_trends_stablehashtag_key} with {len(daily_entries)} entries")
 
-        return s3_key
+        return s3_key_raw  # Return raw-dense key as primary
     except Exception as e:
         print(f"[S3] Error saving stats or updating dashboard: {str(e)}")
         raise
@@ -842,9 +862,12 @@ def lambda_handler(event, context):
     """
     items_raw = event.get("items_raw", [])
     items_stablehashtag = event.get("items_stablehashtag", [])
-    batch_stats = event.get("batch_stats", {})
+    batch_stats_raw = event.get("batch_stats_raw", {})
+    batch_stats_stablehashtag = event.get("batch_stats_stablehashtag", {})
     dense_texts = event.get("dense_texts", [])
+    dense_texts_stablehashtag = event.get("dense_texts_stablehashtag", [])
     dense_base_forms = event.get("dense_base_forms", [])
+    dense_base_forms_stablehashtag = event.get("dense_base_forms_stablehashtag", [])
     getfeed_stats = event.get("getfeed_stats", {"total_invocations": 0})
     hashtags = event.get("hashtags", {})
     top_n = event.get("top_n")
@@ -897,16 +920,17 @@ def lambda_handler(event, context):
         traceback.print_exc()
 
     # === Now update dashboard (after all daily files are ready) ===
-    if batch_stats:
+    if batch_stats_raw and batch_stats_stablehashtag:
         try:
-            top_hashtags, enriched_stats = aggregate_stats(batch_stats)
-            print(f"[PIPELINE] Aggregation complete, saving to S3")
-
-            s3_key = save_stats_to_s3(enriched_stats)
+            # save_stats_to_s3 now accepts both QUERY 1 and QUERY 2 stats
+            s3_key_raw = save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag)
             s3_saved = True
+            print(f"[PIPELINE] Statistics saved to S3")
 
         except Exception as e:
-            pass
+            print(f"[OPTIONAL] Stats save failed (non-critical): {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     # === OPTIONAL: Save badword texts to S3 ===
     try:

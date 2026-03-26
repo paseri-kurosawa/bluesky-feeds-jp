@@ -484,7 +484,7 @@ def lambda_handler(event, context):
                 posts_2 = getattr(res_2, "posts", []) or []
                 print(f"[QUERY2] Found {len(posts_2)} posts for: {search_query_2}")
 
-                items_stablehashtag, _, _, _, _ = process_posts_with_filters(posts_2, feed_type="stablehashtag")
+                items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
                 stablehashtag_posts_count = len(items_stablehashtag)
 
                 # Update rotation state
@@ -534,27 +534,17 @@ def lambda_handler(event, context):
         timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
         iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Calculate rates
-        total_fetched = len(posts_1) + stablehashtag_posts_count
-        passed_filters = len(items)
-        dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
+        # === QUERY 1: raw-dense フィード統計 ===
+        total_fetched_raw = len(posts_1)
+        passed_filters_raw = len(items_raw)
+        dense_rate_raw = (len(dense_texts) / len(items_raw) * 100) if items_raw else 0
+        text_only_short_count_raw = sum(1 for item in items_raw if item["density_score"] == 0.0)
 
-        # Extract and count hashtags from Raw feed (items)
-        # Normalize tags (Unicode NFC + lowercase) to absorb variation
-        hashtag_counts = {}
-        for item in items:
-            hashtags = item.get("hashtags", [])
-            for tag in hashtags:
-                normalized_tag = unicodedata.normalize("NFC", tag).lower()
-                hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
+        badword_hit_rate_raw = (badword_stats['total_posts_with_badwords'] / passed_filters_raw * 100) if passed_filters_raw else 0
+        avg_matches_raw = (badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
+                          if badword_stats['total_posts_with_badwords'] > 0 else 0)
 
-        # Badword metrics
-        badword_hit_rate = (badword_stats['total_posts_with_badwords'] / passed_filters * 100) if passed_filters else 0
-        avg_matches = (badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
-                      if badword_stats['total_posts_with_badwords'] > 0 else 0)
-
-        # Sort matched words by count (descending)
-        matched_words_sorted = [
+        matched_words_sorted_raw = [
             {"word": word, "count": count}
             for word, count in sorted(
                 badword_stats['matched_words'].items(),
@@ -563,41 +553,103 @@ def lambda_handler(event, context):
             )
         ]
 
-        # Build statistics payload for StatsLambda
-        stats_payload = {
+        stats_payload_raw = {
             "execution_time": iso_timestamp,
             "timestamp": timestamp,
             "processing_summary": {
-                "total_fetched": total_fetched,
+                "total_fetched": total_fetched_raw,
                 "invalid_fields": skipped_by_reason['invalid_fields'],
                 "moderation_labels": skipped_by_reason['moderation_labels'],
                 "non_japanese": skipped_by_reason['non_japanese'],
                 "spam_hashtags": skipped_by_reason['spam_hashtags'],
-                "passed_filters": passed_filters,
+                "passed_filters": passed_filters_raw,
                 "rates": {
-                    "invalid_fields_rate": round(skipped_by_reason['invalid_fields'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "moderation_labels_rate": round(skipped_by_reason['moderation_labels'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "non_japanese_rate": round(skipped_by_reason['non_japanese'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "spam_hashtags_rate": round(skipped_by_reason['spam_hashtags'] / total_fetched * 100, 1) if total_fetched else 0,
-                    "passed_filters_rate": round(passed_filters / total_fetched * 100, 1) if total_fetched else 0,
+                    "invalid_fields_rate": round(skipped_by_reason['invalid_fields'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
+                    "moderation_labels_rate": round(skipped_by_reason['moderation_labels'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
+                    "non_japanese_rate": round(skipped_by_reason['non_japanese'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
+                    "spam_hashtags_rate": round(skipped_by_reason['spam_hashtags'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
+                    "passed_filters_rate": round(passed_filters_raw / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
                 }
             },
             "badword_analysis": {
                 "posts_with_badwords": badword_stats['total_posts_with_badwords'],
-                "hit_rate": round(badword_hit_rate, 1),
+                "hit_rate": round(badword_hit_rate_raw, 1),
                 "total_matches": badword_stats['total_badword_matches'],
-                "avg_matches_per_hit": round(avg_matches, 2),
-                "matched_words": matched_words_sorted,
+                "avg_matches_per_hit": round(avg_matches_raw, 2),
+                "matched_words": matched_words_sorted_raw,
                 "distribution": badword_stats['badword_distribution']
             },
             "dense_feed": {
-                "total_items": passed_filters,
-                "text_only_short": text_only_short_count,
+                "total_items": passed_filters_raw,
+                "text_only_short": text_only_short_count_raw,
                 "dense_posts": len(dense_texts),
-                "dense_rate": round(dense_rate, 1)
+                "dense_rate": round(dense_rate_raw, 1)
             },
             "version": "1.0"
         }
+
+        # === QUERY 2: stablehashtag フィード統計 ===
+        total_fetched_stablehashtag = stablehashtag_posts_count
+        passed_filters_stablehashtag = len(items_stablehashtag)
+        dense_rate_stablehashtag = (len(dense_texts_stablehashtag) / len(items_stablehashtag) * 100) if items_stablehashtag else 0
+        text_only_short_count_stablehashtag = sum(1 for item in items_stablehashtag if item["density_score"] == 0.0)
+
+        badword_hit_rate_stablehashtag = (badword_stats_stablehashtag['total_posts_with_badwords'] / passed_filters_stablehashtag * 100) if passed_filters_stablehashtag else 0
+        avg_matches_stablehashtag = (badword_stats_stablehashtag['total_badword_matches'] / badword_stats_stablehashtag['total_posts_with_badwords']
+                                    if badword_stats_stablehashtag['total_posts_with_badwords'] > 0 else 0)
+
+        matched_words_sorted_stablehashtag = [
+            {"word": word, "count": count}
+            for word, count in sorted(
+                badword_stats_stablehashtag['matched_words'].items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+        ]
+
+        stats_payload_stablehashtag = {
+            "execution_time": iso_timestamp,
+            "timestamp": timestamp,
+            "processing_summary": {
+                "total_fetched": total_fetched_stablehashtag,
+                "invalid_fields": skipped_by_reason_stablehashtag['invalid_fields'],
+                "moderation_labels": skipped_by_reason_stablehashtag['moderation_labels'],
+                "non_japanese": skipped_by_reason_stablehashtag['non_japanese'],
+                "spam_hashtags": skipped_by_reason_stablehashtag['spam_hashtags'],
+                "passed_filters": passed_filters_stablehashtag,
+                "rates": {
+                    "invalid_fields_rate": round(skipped_by_reason_stablehashtag['invalid_fields'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
+                    "moderation_labels_rate": round(skipped_by_reason_stablehashtag['moderation_labels'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
+                    "non_japanese_rate": round(skipped_by_reason_stablehashtag['non_japanese'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
+                    "spam_hashtags_rate": round(skipped_by_reason_stablehashtag['spam_hashtags'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
+                    "passed_filters_rate": round(passed_filters_stablehashtag / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
+                }
+            },
+            "badword_analysis": {
+                "posts_with_badwords": badword_stats_stablehashtag['total_posts_with_badwords'],
+                "hit_rate": round(badword_hit_rate_stablehashtag, 1),
+                "total_matches": badword_stats_stablehashtag['total_badword_matches'],
+                "avg_matches_per_hit": round(avg_matches_stablehashtag, 2),
+                "matched_words": matched_words_sorted_stablehashtag,
+                "distribution": badword_stats_stablehashtag['badword_distribution']
+            },
+            "dense_feed": {
+                "total_items": passed_filters_stablehashtag,
+                "text_only_short": text_only_short_count_stablehashtag,
+                "dense_posts": len(dense_texts_stablehashtag),
+                "dense_rate": round(dense_rate_stablehashtag, 1)
+            },
+            "version": "1.0"
+        }
+
+        # Extract and count hashtags from Raw feed only
+        # Normalize tags (Unicode NFC + lowercase) to absorb variation
+        hashtag_counts = {}
+        for item in items_raw:
+            hashtags = item.get("hashtags", [])
+            for tag in hashtags:
+                normalized_tag = unicodedata.normalize("NFC", tag).lower()
+                hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
 
         # Check previous day's daily file and query CloudWatch if needed
         now_jst = datetime.now(JST)
@@ -629,9 +681,12 @@ def lambda_handler(event, context):
             payload = {
                 "items_raw": items_raw,
                 "items_stablehashtag": items_stablehashtag,
-                "batch_stats": stats_payload,
+                "batch_stats_raw": stats_payload_raw,
+                "batch_stats_stablehashtag": stats_payload_stablehashtag,
                 "dense_texts": dense_texts,
+                "dense_texts_stablehashtag": dense_texts_stablehashtag,
                 "dense_base_forms": dense_base_forms,
+                "dense_base_forms_stablehashtag": dense_base_forms_stablehashtag,
                 "getfeed_stats": getfeed_stats,
                 "hashtags": hashtag_counts,
                 "top_n": top_n

@@ -31,3 +31,4 @@ dist/
 # Documentation files (except README.md)
 *.md
 !README.md
+.claude/settings.local.json
