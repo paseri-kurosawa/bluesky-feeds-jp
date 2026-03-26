@@ -82,13 +82,14 @@
           "example_2": "『言う』『言った』『言い張る』 → 全て『言う』『言う』『言う』にマッチ"
         },
         "penalty": {
-          "value": 0.75,
-          "description": "バッドワード1つにつき adjusted_norm に 0.75 を乗算",
-          "formula": "adjusted_norm *= (penalty ^ badword_count)",
-          "single_badword": "adjusted_norm *= 0.75（25% 減衰）",
-          "two_badwords": "adjusted_norm *= 0.75^2 = 0.5625（43.75% 減衰）",
-          "three_badwords": "adjusted_norm *= 0.75^3 ≈ 0.4219（57.81% 減衰）",
-          "rationale": "単一バッドワードで半減は厳しすぎるため、段階的減衰を採用"
+          "coefficient": 1.0,
+          "coefficient_note": "減衰係数（decay coefficient）。値が大きいほどバッドワードペナルティが厳しくなる。単位なし。",
+          "description": "バッドワード数に基づく指数関数的減衰",
+          "formula": "adjusted_norm *= exp(-coefficient * badword_count)",
+          "single_badword": "adjusted_norm *= exp(-1.0) ≈ 0.368（63.2% 減衰）",
+          "two_badwords": "adjusted_norm *= exp(-2.0) ≈ 0.135（86.5% 減衰）",
+          "three_badwords": "adjusted_norm *= exp(-3.0) ≈ 0.050（95.0% 減衰）",
+          "rationale": "指数関数により、バッドワード数が増えるほど急激に減衰する。値を大きくすればより厳しいペナルティになる。"
         },
         "application_stage": {
           "step": 4,

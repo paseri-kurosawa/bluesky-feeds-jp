@@ -469,13 +469,15 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
     if tokens:
         badword_count, matched_words = count_badwords_in_tokens(tokens)
         if badword_count > 0:
-            # Apply penalty using exponential function: adjusted_norm *= exp(-0.5 * count)
-            # より多くのバッドワードがある場合、より急激に減衰
-            multiplier = math.exp(-0.5 * badword_count)
+            # Apply penalty using exponential function: adjusted_norm *= exp(-coefficient * count)
+            # coefficient is configurable in config.json
+            config = get_config()
+            coefficient = config.get("scoring", {}).get("attributes", {}).get("badwords", {}).get("penalty", {}).get("coefficient", 0.5)
+            multiplier = math.exp(-coefficient * badword_count)
             adjusted_norm *= multiplier
             matched_words_str = "、".join(matched_words)
             adjustments.append(f"badwords({badword_count}):×{multiplier:.4f}")
-            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s): 【{matched_words_str}】, penalty multiplier={multiplier:.4f} (exp(-0.5×{badword_count}))")
+            print(f"[BADWORD_PENALTY] Found {badword_count} badword(s): 【{matched_words_str}】, penalty multiplier={multiplier:.4f} (exp(-{coefficient}×{badword_count}))")
 
     adjustment_log = ", ".join(adjustments) if adjustments else "none"
     return adjusted_norm, adjustment_log
