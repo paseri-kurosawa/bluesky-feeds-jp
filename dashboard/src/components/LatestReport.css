@@ -44,6 +44,11 @@
   border-bottom: 2px solid #ddd;
 }
 
+.metrics-table th:nth-child(2),
+.metrics-table th:nth-child(3) {
+  text-align: right;
+}
+
 .metrics-table td {
   padding: 0.6rem;
   border-bottom: 1px solid #eee;
@@ -56,11 +61,13 @@
 .metrics-table .number {
   font-weight: 500;
   color: #667eea;
+  text-align: right;
 }
 
 .metrics-table .percentage {
   font-weight: 500;
   color: #764ba2;
+  text-align: right;
 }
 
 .metrics-table tr.passed {

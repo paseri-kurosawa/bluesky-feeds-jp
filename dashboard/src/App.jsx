@@ -88,13 +88,13 @@ export default function App() {
           <div className="latest-report-row">
             {latestBatchRaw && (
               <div className="latest-report-column">
-                <h3>Raw/Dense Feed (QUERY 1)</h3>
+                <h3>Raw/Dense Feed</h3>
                 <LatestReport data={latestBatchRaw} showTitle={false} />
               </div>
             )}
             {latestBatchStablehashtag && (
               <div className="latest-report-column">
-                <h3>Stable Hashtag Feed (QUERY 2)</h3>
+                <h3>Stable Hashtag Feed</h3>
                 <LatestReport data={latestBatchStablehashtag} showTitle={false} />
               </div>
             )}

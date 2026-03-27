@@ -57,26 +57,29 @@ export function TrendHashtags({ data }) {
     )
   }
 
-  const renderTable = (hashtags) => (
-    <table className="trend-table">
-      <thead>
-        <tr>
-          <th className="rank">Rank</th>
-          <th className="hashtag">Hashtag</th>
-          <th className="count">Count</th>
-        </tr>
-      </thead>
-      <tbody>
-        {hashtags.map((item, idx) => (
-          <tr key={idx}>
-            <td className="rank">{item.rank || idx + 1}</td>
-            <td className="hashtag">#{item.tag}</td>
-            <td className="count">{item.count}</td>
+  const renderTable = (hashtags) => {
+    const top10 = hashtags.slice(0, 10)
+    return (
+      <table className="trend-table">
+        <thead>
+          <tr>
+            <th className="rank">Rank</th>
+            <th className="hashtag">Hashtag</th>
+            <th className="count">Count</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
-  )
+        </thead>
+        <tbody>
+          {top10.map((item, idx) => (
+            <tr key={idx}>
+              <td className="rank">{item.rank || idx + 1}</td>
+              <td className="hashtag">#{item.tag}</td>
+              <td className="count">{item.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+  }
 
   return (
     <div className="trend-hashtags">

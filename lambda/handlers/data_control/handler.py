@@ -543,95 +543,67 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
     return raw_stored, dense_stored, stablehashtag_stored
 
 
-# === Responsibility 2: Aggregate Statistics ===
-def aggregate_stats(batch_stats):
+# === Responsibility 2: Aggregate 1H Hashtags (per batch) ===
+def aggregate_1h_hashtags(bucket):
     """
-    Aggregate hashtags and prepare batch statistics.
+    Aggregate hashtags from past 1 hour batch files.
+    Reads from hashtags/batch/ and sums counts from files within the last 1 hour.
+    Sorts by count (descending).
 
-    Returns: (top_hashtags, enriched_batch_stats)
-    Returns: ([], batch_stats) on failure (non-critical)
+    Returns: Dict of {tag: count} sorted by count, or {} on failure
     """
-    top_hashtags = []
-
     try:
-        # Get all posts from raw feed
-        raw_posts = r.zrevrange("feed:raw:jp:v1", 0, -1)
-        print(f"[STATS] Retrieved {len(raw_posts)} posts (all) from feed:raw:jp:v1")
+        now = get_jst_now()
+        one_hour_ago = now - timedelta(hours=1)
+        one_hour_ago_str = one_hour_ago.strftime("%Y-%m-%d_%H:%M")
+        now_str = now.strftime("%Y-%m-%d_%H:%M")
 
-        if raw_posts:
-            # Helper function to aggregate hashtags
-            def compute_hashtag_trends(posts, label="ALL"):
-                hashtag_counts = {}
-                for post_json in posts:
-                    try:
-                        post_data = json.loads(post_json)
-                        hashtags = post_data.get("hashtags", [])
-                        for tag in hashtags:
-                            normalized_tag = unicodedata.normalize("NFC", tag).lower()
-                            hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
-                    except Exception as e:
-                        print(f"[STATS] Error parsing post JSON: {str(e)}")
-                        continue
+        # List batch files from past 1 hour
+        prefix = f"hashtags/batch/"
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
 
-                # Sort by count and get top 10
-                sorted_hashtags = sorted(
-                    hashtag_counts.items(),
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:10]
+        aggregated = {}
+        batch_count = 0
 
-                # Assign ranks: same count = same rank
-                trends = []
-                rank = 1
-                prev_count = None
-                for i, (tag, count) in enumerate(sorted_hashtags):
-                    if prev_count is not None and count < prev_count:
-                        rank = i + 1
-                    trends.append({"rank": rank, "tag": tag, "count": count})
-                    prev_count = count
+        for page in pages:
+            if "Contents" not in page:
+                continue
 
-                print(f"[STATS] Aggregated {len(hashtag_counts)} unique hashtags ({label}), top 10 extracted")
-                for ht in trends:
-                    print(f"  - #{ht['tag']}: {ht['count']} ({label})")
-                return trends
-
-            # Filter posts from last 1 hour (3600 seconds)
-            now = int(time.time())
-            one_hour_ago = now - 3600
-            recent_posts = []
-            for post_json in raw_posts:
+            for obj in page["Contents"]:
+                key = obj["Key"]
+                # Extract timestamp from key: hashtags/batch/YYYY-MM-DD_HH:MM.json
                 try:
-                    post_data = json.loads(post_json)
-                    post_ts = post_data.get("ts", 0)
-                    if post_ts >= one_hour_ago:
-                        recent_posts.append(post_json)
+                    timestamp_str = key.split("/")[-1].replace(".json", "")
+                    # Check if within 1 hour range
+                    if one_hour_ago_str <= timestamp_str <= now_str:
+                        response = s3_client.get_object(Bucket=bucket, Key=key)
+                        batch_data = json.loads(response["Body"].read().decode("utf-8"))
+
+                        # Aggregate hashtags
+                        for tag, count in batch_data.items():
+                            aggregated[tag] = aggregated.get(tag, 0) + count
+
+                        batch_count += 1
                 except Exception as e:
+                    print(f"[1H HASHTAGS] Error processing {key}: {str(e)}")
                     continue
 
-            print(f"[STATS] Filtered {len(recent_posts)} posts from last 1 hour")
+        # Sort by count (descending)
+        sorted_hashtags = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)
+        sorted_dict = dict(sorted_hashtags)
 
-            # Compute trends for both ALL and 1H
-            top_hashtags = compute_hashtag_trends(raw_posts, "ALL")
-            top_hashtags_1h = compute_hashtag_trends(recent_posts, "1H")
-        else:
-            print("[STATS] No posts found in feed:raw:jp:v1")
-            top_hashtags = []
-            top_hashtags_1h = []
+        print(f"[1H HASHTAGS] Aggregated {len(aggregated)} unique hashtags from {batch_count} batches (last 1H)")
+        for tag, count in sorted_hashtags[:10]:
+            print(f"  - #{tag}: {count}")
+
+        return sorted_dict
 
     except Exception as e:
-        print(f"[STATS] Error aggregating: {str(e)}")
+        print(f"[1H HASHTAGS] Error aggregating: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Continue - aggregation failure is not critical
-
-    # Enrich batch_stats with top_hashtags
-    enriched_stats = {
-        **batch_stats,
-        "top_hashtags": top_hashtags,
-        "top_hashtags_1h": top_hashtags_1h
-    }
-
-    return top_hashtags, enriched_stats
+        return {}
 
 
 def extract_stable_hashtags(bucket, days=30, top_n=10):
@@ -769,6 +741,61 @@ def backfill_hashtag_daily(bucket):
         print(f"[HASHTAG ERROR] Failed to backfill hashtag daily: {str(e)}")
 
 
+def aggregate_all_hashtags(bucket):
+    """
+    Aggregate ALL hashtags from daily files.
+    Reads from hashtags/daily/ and sums counts from all daily files.
+    Sorts by count (descending).
+
+    Returns: Dict of {tag: count} sorted by count, or {} on failure
+    """
+    try:
+        prefix = "hashtags/daily/"
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+
+        aggregated = {}
+        daily_count = 0
+
+        for page in pages:
+            if "Contents" not in page:
+                continue
+
+            for obj in page["Contents"]:
+                key = obj["Key"]
+                if not key.endswith(".json"):
+                    continue
+
+                try:
+                    response = s3_client.get_object(Bucket=bucket, Key=key)
+                    daily_data = json.loads(response["Body"].read().decode("utf-8"))
+
+                    # Aggregate hashtags
+                    for tag, count in daily_data.items():
+                        aggregated[tag] = aggregated.get(tag, 0) + count
+
+                    daily_count += 1
+                except Exception as e:
+                    print(f"[ALL HASHTAGS] Error processing {key}: {str(e)}")
+                    continue
+
+        # Sort by count (descending)
+        sorted_hashtags = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)
+        sorted_dict = dict(sorted_hashtags)
+
+        print(f"[ALL HASHTAGS] Aggregated {len(aggregated)} unique hashtags from {daily_count} daily files")
+        for tag, count in sorted_hashtags[:10]:
+            print(f"  - #{tag}: {count}")
+
+        return sorted_dict
+
+    except Exception as e:
+        print(f"[ALL HASHTAGS] Error aggregating: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
 # === Responsibility 3: Save Statistics to S3 ===
 def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
     """
@@ -851,13 +878,18 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
 
         # Save top_hashtags_1h to components/top_hashtags_1h_from_raw_posts.json (QUERY 1 only)
         top_hashtags_1h_key = "components/top_hashtags_1h_from_raw_posts.json"
-        top_hashtags_1h = dashboard_stats_raw.get("top_hashtags_1h", [])
+        top_hashtags_1h_raw = dashboard_stats_raw.get("top_hashtags_1h", {})
+        # Convert dict to array format for dashboard
+        if isinstance(top_hashtags_1h_raw, dict):
+            top_hashtags_1h_array = [{"tag": tag, "count": count} for tag, count in top_hashtags_1h_raw.items()]
+        else:
+            top_hashtags_1h_array = top_hashtags_1h_raw if isinstance(top_hashtags_1h_raw, list) else []
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
             Key=top_hashtags_1h_key,
             Body=json.dumps({
                 "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "top_hashtags_1h": top_hashtags_1h
+                "top_hashtags_1h": top_hashtags_1h_array
             }, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
@@ -986,11 +1018,33 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
 
+    # === Aggregate ALL hashtags (after daily files are ready) ===
+    try:
+        top_hashtags_all = aggregate_all_hashtags(STATISTICS_BUCKET)
+        if top_hashtags_all:
+            batch_stats_raw["top_hashtags"] = top_hashtags_all
+            batch_stats_stablehashtag["top_hashtags"] = top_hashtags_all
+    except Exception as e:
+        print(f"[OPTIONAL] ALL hashtags aggregation failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
     # === OPTIONAL: Backfill previous day's daily stats if missing (BEFORE dashboard update) ===
     try:
         backfill_previous_day(STATISTICS_BUCKET, getfeed_stats)
     except Exception as e:
         print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    # === Aggregate 1H hashtags (per batch) ===
+    try:
+        top_hashtags_1h = aggregate_1h_hashtags(STATISTICS_BUCKET)
+        if top_hashtags_1h:
+            batch_stats_raw["top_hashtags_1h"] = top_hashtags_1h
+            batch_stats_stablehashtag["top_hashtags_1h"] = top_hashtags_1h
+    except Exception as e:
+        print(f"[OPTIONAL] 1H hashtags aggregation failed (non-critical): {str(e)}")
         import traceback
         traceback.print_exc()
 
