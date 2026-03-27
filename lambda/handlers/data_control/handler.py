@@ -606,7 +606,7 @@ def aggregate_1h_hashtags(bucket):
         return {}
 
 
-def extract_stable_hashtags(bucket, days=30, top_n=10):
+def extract_stable_hashtags(bucket, days=30, top_n=100):
     """
     Extract TOP stable hashtags from past N days of daily files.
     (Reads from hashtags/daily/ instead of batch/ for TTL consistency)
@@ -614,7 +614,7 @@ def extract_stable_hashtags(bucket, days=30, top_n=10):
     Args:
         bucket: S3 bucket name
         days: Number of days to analyze (default 30)
-        top_n: Number of top hashtags to return (default 10)
+        top_n: Number of top hashtags to return (default 100)
 
     Returns:
         List of dicts [{"tag": "...", "count": ...}, ...]
@@ -737,6 +737,52 @@ def backfill_hashtag_daily(bucket):
             else:
                 print(f"[HASHTAG] No batch files found for yesterday")
 
+            # === After backfill, aggregate ALL hashtags (date changed) ===
+            try:
+                print(f"[ALL HASHTAGS] Starting ALL aggregation (date changed)")
+                top_hashtags_all = aggregate_all_hashtags(bucket)
+                if top_hashtags_all:
+                    print(f"[ALL HASHTAGS] Successfully aggregated {len(top_hashtags_all)} unique hashtags")
+
+                    # === Update rotation/state.json with TOP 100 hashtags ===
+                    try:
+                        # Convert dict to list format for rotation
+                        hashtags_list = [
+                            {"tag": tag, "count": count}
+                            for tag, count in list(top_hashtags_all.items())[:100]
+                        ]
+
+                        rotation_state = {
+                            "current_index": 0,
+                            "last_rotation_time": get_jst_now().isoformat(),
+                            "total_rotations": 0,
+                            "stable_hashtags": hashtags_list
+                        }
+
+                        state_key = "hashtags/rotation/state.json"
+                        s3_client.put_object(
+                            Bucket=bucket,
+                            Key=state_key,
+                            Body=json.dumps(rotation_state, ensure_ascii=False, indent=2),
+                            ContentType="application/json; charset=utf-8"
+                        )
+                        print(f"[ROTATION] Updated rotation/state.json with TOP 100 hashtags")
+                    except Exception as e:
+                        print(f"[ROTATION] Error updating rotation state: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+
+                    # Return the aggregated hashtags for caller to use
+                    return top_hashtags_all
+                else:
+                    print(f"[ALL HASHTAGS] No hashtags aggregated")
+            except Exception as e:
+                print(f"[ALL HASHTAGS] Error aggregating ALL: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"[HASHTAG] Yesterday's file already exists, skipping backfill and ALL aggregation")
+
     except Exception as e:
         print(f"[HASHTAG ERROR] Failed to backfill hashtag daily: {str(e)}")
 
@@ -832,8 +878,8 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
         )
         print(f"[S3] Saved stablehashtag stats to {s3_key_stablehashtag}")
 
-        # Extract stable hashtags for dashboard
-        stable_hashtags = extract_stable_hashtags(STATISTICS_BUCKET, days=30, top_n=10)
+        # Extract stable hashtags for dashboard (TOP 100)
+        stable_hashtags = extract_stable_hashtags(STATISTICS_BUCKET, days=30, top_n=100)
 
         # === Build separate dashboard stats for QUERY 1 and QUERY 2 ===
         # Remove top_hashtags (archive), keep top_hashtags_1h (1H trend), add stable_hashtags
@@ -1011,21 +1057,15 @@ def lambda_handler(event, context):
         traceback.print_exc()
 
     # === OPTIONAL: Backfill hashtag daily if missing (BEFORE dashboard update) ===
+    # This also returns ALL hashtags if date changed
     try:
-        backfill_hashtag_daily(STATISTICS_BUCKET)
-    except Exception as e:
-        print(f"[OPTIONAL] Hashtag daily backfill failed (non-critical): {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-    # === Aggregate ALL hashtags (after daily files are ready) ===
-    try:
-        top_hashtags_all = aggregate_all_hashtags(STATISTICS_BUCKET)
+        top_hashtags_all = backfill_hashtag_daily(STATISTICS_BUCKET)
         if top_hashtags_all:
             batch_stats_raw["top_hashtags"] = top_hashtags_all
             batch_stats_stablehashtag["top_hashtags"] = top_hashtags_all
+            print(f"[PIPELINE] ALL hashtags updated from backfill")
     except Exception as e:
-        print(f"[OPTIONAL] ALL hashtags aggregation failed (non-critical): {str(e)}")
+        print(f"[OPTIONAL] Hashtag daily backfill failed (non-critical): {str(e)}")
         import traceback
         traceback.print_exc()
 

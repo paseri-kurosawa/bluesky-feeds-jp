@@ -294,10 +294,11 @@ def get_current_hashtag(bucket):
     top_n = config.get("hashtag_rotation", {}).get("top_n", 5)
 
     state = get_rotation_state(bucket)
-    tags = get_stable_hashtags(bucket)
+    # Get tags from rotation state (TOP 100 updated by data_control daily)
+    tags = state.get("stable_hashtags", [])
 
     if not tags:
-        print("[HASHTAGS] No stable tags available")
+        print("[HASHTAGS] No stable tags available in rotation state")
         return None, state
 
     # Use only top_n tags from config
@@ -307,12 +308,12 @@ def get_current_hashtag(bucket):
 
     print(f"[ROTATION] Current index: {current_index}, Tag: #{current_tag}")
 
-    # Prepare next state with stable_hashtags
+    # Prepare next state: update current_index, but preserve stable_hashtags from rotation
     next_state = {
         "current_index": (current_index + 1) % len(active_tags),
         "last_rotation_time": datetime.now(JST).isoformat(),
         "total_rotations": state.get("total_rotations", 0) + 1,
-        "stable_hashtags": tags  # Include all stable hashtags (used by Dashboard & Ingest)
+        "stable_hashtags": tags  # Preserve all stable hashtags from rotation
     }
 
     return current_tag, next_state

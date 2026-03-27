@@ -57,6 +57,12 @@
   padding: 1rem;
 }
 
+.trend-table-container {
+  max-height: 600px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
 
 .trend-table {
   width: 100%;
@@ -68,6 +74,9 @@
 .trend-table thead {
   background-color: #e8e8e8;
   font-weight: bold;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .trend-table th {
