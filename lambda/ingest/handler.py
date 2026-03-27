@@ -407,11 +407,14 @@ def process_posts_with_filters(posts, feed_type="raw"):
         # Convert indexed_at to timestamp
         ts = time.mktime(time.strptime(indexed_at, "%Y-%m-%dT%H:%M:%S.%fZ"))
 
+        # Normalize hashtags (Unicode NFC + lowercase)
+        normalized_hashtags = [unicodedata.normalize("NFC", tag).lower() for tag in hashtags]
+
         items.append({
             "uri": uri,
             "ts": ts,
             "density_score": density_score,
-            "hashtags": hashtags,
+            "hashtags": normalized_hashtags,
         })
 
         # Collect text and base forms if it will go to Dense feed
