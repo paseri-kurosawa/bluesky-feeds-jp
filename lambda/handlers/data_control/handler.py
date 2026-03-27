@@ -38,7 +38,7 @@ def get_batch_spread_seconds():
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 STATISTICS_BUCKET = os.environ.get("STATISTICS_BUCKET", "")
-MAX_ITEMS_RAW = 5000
+MAX_ITEMS_RAW = 2000
 MAX_ITEMS_DENSE = 2000
 MAX_ITEMS_STABLETAG = 2000
 
