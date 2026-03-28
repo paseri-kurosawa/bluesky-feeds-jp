@@ -12,6 +12,7 @@ JST = timezone(timedelta(hours=9))
 
 # AWS Clients
 cloudwatch_client = boto3.client("cloudwatch")
+s3_client = boto3.client("s3")
 
 # CloudWatch query function
 def get_getfeed_invocations_for_date(target_date):
