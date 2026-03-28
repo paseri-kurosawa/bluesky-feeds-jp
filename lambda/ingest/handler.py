@@ -288,13 +288,39 @@ def get_stable_hashtags(bucket):
         return []
 
 
+def get_1h_hashtags(bucket):
+    """Load 1H hashtags from S3 components directory"""
+    try:
+        hashtags_key = "components/top_hashtags_1h_from_raw_posts.json"
+        response = s3_client.get_object(Bucket=bucket, Key=hashtags_key)
+        data = json.loads(response["Body"].read().decode("utf-8"))
+        hashtags_1h = data.get("top_hashtags_1h", [])
+        # Convert list of dicts to set of tag names
+        tags_1h_set = {tag_dict["tag"].lower() for tag_dict in hashtags_1h}
+        print(f"[1H HASHTAGS] Loaded {len(tags_1h_set)} unique 1H hashtags")
+        return tags_1h_set
+    except Exception as e:
+        print(f"[1H HASHTAGS] Error loading 1H hashtags: {e}")
+        return set()
+
+
 def get_current_hashtag(bucket):
-    """Get current hashtag based on rotation state"""
+    """
+    Get current hashtag based on rotation state with hot detection.
+
+    Flow:
+    1. Load rotation state
+    2. Load 1H hashtags
+    3. Detect hot hashtags (intersection of stable + 1H)
+    4. Check if hot hashtag is in cooldown (hot_fired_at_index)
+    5. If hot detected, use it and don't advance current_index
+    6. If no hot, use normal rotation and advance current_index
+    7. Clean up cooled-down hot tags (when current_index cycles back)
+    """
     config = get_config()
     top_n = config.get("hashtag_rotation", {}).get("top_n", 5)
 
     state = get_rotation_state(bucket)
-    # Get tags from rotation state (TOP 100 updated by data_control daily)
     tags = state.get("stable_hashtags", [])
 
     if not tags:
@@ -304,17 +330,69 @@ def get_current_hashtag(bucket):
     # Use only top_n tags from config
     active_tags = tags[:top_n]
     current_index = state.get("current_index", 0) % len(active_tags)
-    current_tag = active_tags[current_index]["tag"]
+    hot_fired_at_index = state.get("hot_fired_at_index", [])
 
-    print(f"[ROTATION] Current index: {current_index}, Tag: #{current_tag}")
+    print(f"[ROTATION] Current index: {current_index}, Hot cooldown: {hot_fired_at_index}")
 
-    # Prepare next state: update current_index, but preserve stable_hashtags from rotation
+    # Load 1H hashtags for hot detection
+    tags_1h_set = get_1h_hashtags(bucket)
+
+    # === Hot Detection & Cooldown Management ===
+    current_tag = None
+    next_index = current_index
+    next_hot_fired_at_index = hot_fired_at_index.copy()
+
+    # Check for hot hashtags in active_tags[:top_n]
+    for idx, tag_dict in enumerate(active_tags):
+        tag_name = tag_dict["tag"].lower()
+
+        # Check if tag is in 1H hashtags (hot)
+        if tag_name in tags_1h_set:
+            # Check if already in cooldown
+            in_cooldown = any(fired_tag.lower() == tag_name for fired_tag, _ in hot_fired_at_index)
+
+            if not in_cooldown:
+                # Hot detected and not in cooldown
+                print(f"[FIRE] Hot tag detected: #{tag_dict['tag']} (index={idx})")
+                current_tag = tag_dict["tag"]
+                next_hot_fired_at_index.append([tag_dict["tag"], current_index])
+                # DO NOT advance current_index (stay at current)
+                next_index = current_index
+                break
+            else:
+                print(f"[COOLDOWN] Hot tag in cooldown: #{tag_dict['tag']} (index={idx})")
+
+    # === Cooldown Cleanup ===
+    # If no hot tag was used this batch, check if current_index matches any fired_at_index
+    if current_tag is None:
+        # Remove from cooldown if current_index cycles back
+        next_hot_fired_at_index = [
+            [tag, fired_idx]
+            for tag, fired_idx in hot_fired_at_index
+            if fired_idx != current_index
+        ]
+
+        if len(next_hot_fired_at_index) < len(hot_fired_at_index):
+            removed_tags = [tag for tag, fired_idx in hot_fired_at_index if fired_idx == current_index]
+            print(f"[COOLDOWN RELEASE] Tags released from cooldown: {removed_tags}")
+
+    # === Normal Rotation (if no hot tag) ===
+    if current_tag is None:
+        current_tag = active_tags[current_index]["tag"]
+        # Advance current_index only if no hot tag was used
+        next_index = (current_index + 1) % len(active_tags)
+        print(f"[ROTATION] Normal rotation: #{current_tag} (index={current_index})")
+
+    # Prepare next state
     next_state = {
-        "current_index": (current_index + 1) % len(active_tags),
+        "current_index": next_index,
         "last_rotation_time": datetime.now(JST).isoformat(),
         "total_rotations": state.get("total_rotations", 0) + 1,
-        "stable_hashtags": tags  # Preserve all stable hashtags from rotation
+        "stable_hashtags": tags,
+        "hot_fired_at_index": next_hot_fired_at_index
     }
+
+    print(f"[ROTATION] Next state: index={next_index}, hot_fired_at_index={next_hot_fired_at_index}")
 
     return current_tag, next_state
 
