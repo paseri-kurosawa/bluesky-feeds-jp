@@ -34,6 +34,35 @@ r = redis.Redis(
     socket_timeout=5,
 )
 
+def deduplicate_by_uri(raw_results):
+    """
+    Deduplicate feed items by URI for stablehashtag feed.
+
+    Args:
+        raw_results: List of (member_json, score) tuples from zrevrangebyscore
+
+    Returns:
+        List of (member_json, score) tuples with duplicate URIs removed
+    """
+    seen_uris = set()
+    unique_results = []
+
+    for member_json, score in raw_results:
+        try:
+            member = json.loads(member_json)
+            uri = member.get("uri")
+
+            if uri and uri not in seen_uris:
+                seen_uris.add(uri)
+                unique_results.append((member_json, score))
+            # else: duplicate URI, skip
+        except json.JSONDecodeError:
+            # Fallback: treat as plain string, keep as is
+            unique_results.append((member_json, score))
+
+    return unique_results
+
+
 def lambda_handler(event, context):
     """
     Get Feed Skeleton endpoint: /xrpc/app.bsky.feed.getFeedSkeleton
@@ -145,6 +174,14 @@ def lambda_handler(event, context):
         )
 
         print(f"[DEBUG] zrevrangebyscore result count: {len(raw)}, max_score: {max_score}, offset: {offset}, limit: {limit}")
+
+        # Deduplicate by URI for stablehashtag feed
+        if feed_type == "stablehashtag":
+            raw_before = len(raw)
+            raw = deduplicate_by_uri(raw)
+            raw_after = len(raw)
+            if raw_before != raw_after:
+                print(f"[DEBUG] Deduplicated stablehashtag feed: {raw_before} -> {raw_after} (removed {raw_before - raw_after} duplicates)")
 
         # Build feed items
         # Always return requested limit regardless of batch state
