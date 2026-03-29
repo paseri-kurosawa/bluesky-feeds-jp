@@ -6,7 +6,15 @@
   "scheduling": {
     "description": "スケジューリング設定（EventBridge実行周期に対応）",
     "batch_spread_seconds": 600,
-    "batch_spread_note": "ポストの可視化時間分布。10分ごとの実行に対応。単位: 秒。"
+    "batch_spread_note": "ポストの可視化時間分布。10分ごとの実行に対応。単位: 秒。",
+    "stablehashtag_spread_exponent": 0.5,
+    "stablehashtag_spread_note": "StableHashtag フィードの分布曲線指数。公式: offset = batch_spread_seconds * top_n * (1 - (1 - idx/(count-1))^exponent)",
+    "stablehashtag_spread_examples": {
+      "1.0": "線形均等分散（元々の設定）",
+      "0.3": "さらに序盤に集中（指数が小さいと早く立ち上がる）",
+      "0.5": "バランス型（現在の設定、序盤に集中、後半は疎ら）",
+      "0.7": "後ろに分散気味（指数が大きいと緩やかに立ち上がる）"
+    }
   },
   "search": {
     "description": "Bluesky 検索パラメータ",

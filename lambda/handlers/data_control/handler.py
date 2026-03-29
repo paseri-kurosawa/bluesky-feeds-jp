@@ -502,10 +502,13 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
         if ts < 0:
             continue
 
-        # Calculate visible_ts: distribute posts across (batch_spread_seconds * top_n) window for stablehashtag
-        # Multiply by top_n to ensure diversity across rotating hashtags
+        # Calculate visible_ts: distribute posts with early concentration, sparse later
+        # Using exponential distribution: (1 - (1 - idx/(count-1))^exponent)
+        # exponent < 1: concentrates early, exponent > 1: spreads later
+        config = get_config()
+        spread_exponent = config.get("scheduling", {}).get("stablehashtag_spread_exponent", 0.5)
         if stablehashtag_count > 1:
-            offset = (idx / (stablehashtag_count - 1)) * batch_spread_seconds * top_n
+            offset = batch_spread_seconds * top_n * (1 - (1 - idx / (stablehashtag_count - 1)) ** spread_exponent)
         else:
             offset = 0
         visible_ts = now + offset

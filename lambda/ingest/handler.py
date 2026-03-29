@@ -12,52 +12,84 @@ JST = timezone(timedelta(hours=9))
 
 # AWS Clients
 cloudwatch_client = boto3.client("cloudwatch")
+logs_client = boto3.client("logs")
 s3_client = boto3.client("s3")
 
-# CloudWatch query function
-def get_getfeed_invocations_for_date(target_date):
+# CloudWatch Logs query function for feed-specific calls
+def get_getfeed_calls_by_feed_type(target_date):
     """
-    Get total GetFeedLambda invocations for a specific date from CloudWatch.
+    Query API Gateway access logs from CloudWatch Logs to count GetFeed calls by feed type.
 
     Args:
         target_date: Date string in format YYYY-MM-DD
 
     Returns:
-        Total invocation count for the date (0 if query fails)
+        Dict with raw_calls, dense_calls, stablehashtag_calls, total_invocations
     """
     try:
         date_obj = datetime.strptime(target_date, "%Y-%m-%d")
         start_time = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
         end_time = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-        # Convert to UTC (JST is UTC+9)
-        start_time_utc = start_time - timedelta(hours=9)
-        end_time_utc = end_time - timedelta(hours=9)
+        # Convert to Unix timestamp in seconds
+        start_time_s = int(start_time.timestamp())
+        end_time_s = int(end_time.timestamp())
 
-        response = cloudwatch_client.get_metric_statistics(
-            Namespace='AWS/Lambda',
-            MetricName='Invocations',
-            Dimensions=[
-                {
-                    'Name': 'FunctionName',
-                    'Value': 'BlueskyFeedJpStack-GetFeedLambda76B14ED4-DfIhJgHN7YXZ'
-                }
-            ],
-            StartTime=start_time_utc,
-            EndTime=end_time_utc,
-            Period=3600,
-            Statistics=['Sum']
-        )
+        log_group = '/aws/apigateway/bluesky-feed-jp'
 
-        total_invocations = 0
-        if response.get('Datapoints'):
-            for dp in response['Datapoints']:
-                total_invocations += dp.get('Sum', 0)
+        print(f"[LOGS] Querying API Gateway access logs for {target_date}")
 
-        return int(total_invocations)
+        # Query for each feed type
+        query_patterns = {
+            'raw_calls': 'feed=raw',
+            'dense_calls': 'feed=dense',
+            'stablehashtag_calls': 'feed=stablehashtag'
+        }
+
+        results = {'total_invocations': 0}
+
+        for field_name, pattern in query_patterns.items():
+            try:
+                query_string = f'fields @timestamp | filter @message like /{pattern}/ | stats count() as count'
+                response = logs_client.start_query(
+                    logGroupName=log_group,
+                    startTime=start_time_s,
+                    endTime=end_time_s,
+                    queryString=query_string
+                )
+                query_id = response['queryId']
+
+                # Wait for query to complete
+                for _ in range(30):  # Max 30 seconds
+                    result = logs_client.get_query_results(queryId=query_id)
+                    if result['status'] == 'Complete':
+                        count = 0
+                        if result['results']:
+                            for record in result['results']:
+                                for field in record:
+                                    if field['field'] == 'count':
+                                        count = int(field['value'])
+                        results[field_name] = count
+                        results['total_invocations'] += count
+                        break
+                    time.sleep(1)
+            except Exception as e:
+                print(f"[LOGS] Error querying {field_name}: {str(e)}")
+                results[field_name] = 0
+
+        print(f"[LOGS] Feed calls for {target_date}: raw={results.get('raw_calls', 0)}, dense={results.get('dense_calls', 0)}, stablehashtag={results.get('stablehashtag_calls', 0)}")
+        return results
 
     except Exception as e:
-        return 0
+        print(f"[LOGS] Error querying feed calls for {target_date}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'raw_calls': 0,
+            'dense_calls': 0,
+            'stablehashtag_calls': 0,
+            'total_invocations': 0
+        }
 
 # Load configuration
 def load_config():
@@ -79,6 +111,7 @@ def get_config():
 BSKY_SECRET_NAME = os.environ.get("BSKY_SECRET_NAME", "bluesky-feed-jp/credentials")
 STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
+GETFEED_LAMBDA_NAME = os.environ.get("GETFEED_LAMBDA_NAME", "")
 
 # Cached credentials (loaded at runtime from Secrets Manager)
 _bsky_credentials = None
@@ -253,7 +286,8 @@ def get_rotation_state(bucket):
             "current_index": 0,
             "last_rotation_time": datetime.now(JST).isoformat(),
             "total_rotations": 0,
-            "stable_hashtags": []
+            "stable_hashtags": [],
+            "hot_fired_at_index": []
         }
 
 
@@ -342,6 +376,7 @@ def get_current_hashtag(bucket):
     current_tag = None
     next_index = current_index
     next_hot_fired_at_index = hot_fired_at_index.copy()
+    hot_was_fired = False
 
     # Check for hot hashtags in active_tags[:top_n]
     for idx, tag_dict in enumerate(active_tags):
@@ -350,39 +385,46 @@ def get_current_hashtag(bucket):
         # Check if tag is in 1H hashtags (hot)
         if tag_name in tags_1h_set:
             # Check if already in cooldown
-            in_cooldown = any(fired_tag.lower() == tag_name for fired_tag, _ in hot_fired_at_index)
+            in_cooldown = any(entry.get("tag", "").lower() == tag_name for entry in hot_fired_at_index)
 
             if not in_cooldown:
                 # Hot detected and not in cooldown
-                print(f"[FIRE] Hot tag detected: #{tag_dict['tag']} (index={idx})")
+                print(f"[FIRE] Hot tag detected: #{tag_dict['tag']} (index={current_index})")
                 current_tag = tag_dict["tag"]
-                next_hot_fired_at_index.append([tag_dict["tag"], current_index])
+                hot_was_fired = True
+                next_hot_fired_at_index.append({
+                    "tag": tag_dict["tag"],
+                    "index": current_index,
+                    "fired_at": datetime.now(JST).isoformat()
+                })
                 # DO NOT advance current_index (stay at current)
                 next_index = current_index
                 break
             else:
                 print(f"[COOLDOWN] Hot tag in cooldown: #{tag_dict['tag']} (index={idx})")
 
-    # === Cooldown Cleanup ===
-    # If no hot tag was used this batch, check if current_index matches any fired_at_index
-    if current_tag is None:
-        # Remove from cooldown if current_index cycles back
-        next_hot_fired_at_index = [
-            [tag, fired_idx]
-            for tag, fired_idx in hot_fired_at_index
-            if fired_idx != current_index
-        ]
-
-        if len(next_hot_fired_at_index) < len(hot_fired_at_index):
-            removed_tags = [tag for tag, fired_idx in hot_fired_at_index if fired_idx == current_index]
-            print(f"[COOLDOWN RELEASE] Tags released from cooldown: {removed_tags}")
-
     # === Normal Rotation (if no hot tag) ===
-    if current_tag is None:
+    if not hot_was_fired:
         current_tag = active_tags[current_index]["tag"]
         # Advance current_index only if no hot tag was used
         next_index = (current_index + 1) % len(active_tags)
         print(f"[ROTATION] Normal rotation: #{current_tag} (index={current_index})")
+
+    # === Cooldown Cleanup ===
+    # If no hot tag was used this batch, check if next_index matches any fired_at_index
+    # (execute after rotation to use updated next_index for cleanup)
+    if not hot_was_fired:
+        # Remove from cooldown if next_index cycles back
+        prev_len = len(next_hot_fired_at_index)
+        next_hot_fired_at_index = [
+            entry
+            for entry in next_hot_fired_at_index
+            if entry.get("index") != next_index
+        ]
+
+        if len(next_hot_fired_at_index) < prev_len:
+            removed_tags = [entry.get("tag") for entry in hot_fired_at_index if entry.get("index") == next_index]
+            print(f"[COOLDOWN RELEASE] Tags released from cooldown: {removed_tags}")
 
     # Prepare next state
     next_state = {
@@ -568,7 +610,7 @@ def lambda_handler(event, context):
                 print(f"[QUERY2] Found {len(posts_2)} posts for: {search_query_2}")
 
                 items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
-                stablehashtag_posts_count = len(items_stablehashtag)
+                stablehashtag_posts_count = len(posts_2)
 
                 # Update rotation state
                 save_rotation_state(statistics_bucket, next_state)
@@ -734,12 +776,17 @@ def lambda_handler(event, context):
                 normalized_tag = unicodedata.normalize("NFC", tag).lower()
                 hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
 
-        # Check previous day's daily file and query CloudWatch if needed
+        # Check previous day's daily file and query CloudWatch Logs if needed
         now_jst = datetime.now(JST)
         yesterday = now_jst - timedelta(days=1)
         yesterday_date = yesterday.strftime("%Y-%m-%d")
 
-        getfeed_stats = {"total_invocations": 0}
+        getfeed_stats = {
+            "raw_calls": 0,
+            "dense_calls": 0,
+            "stablehashtag_calls": 0,
+            "total_invocations": 0
+        }
 
         # Check if yesterday's daily file exists in STATISTICS_BUCKET
         try:
@@ -750,9 +797,8 @@ def lambda_handler(event, context):
         except ClientError as e:
             # Check if it's a 404 (NoSuchKey)
             if e.response['Error']['Code'] == '404' or e.response['Error']['Code'] == 'NoSuchKey':
-                # Daily file doesn't exist, query CloudWatch
-                getfeed_invocations = get_getfeed_invocations_for_date(yesterday_date)
-                getfeed_stats["total_invocations"] = getfeed_invocations
+                # Daily file doesn't exist, query CloudWatch Logs for feed-specific calls
+                getfeed_stats = get_getfeed_calls_by_feed_type(yesterday_date)
         except Exception as e:
             pass
 

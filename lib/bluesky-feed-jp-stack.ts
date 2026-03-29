@@ -172,6 +172,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
 
     // Set Lambda function names
     ingestLambda.addEnvironment('STORE_FUNCTION_NAME', dataControlLambda.functionName);
+    ingestLambda.addEnvironment('GETFEED_LAMBDA_NAME', getFeedLambda.functionName);
 
     // Grant permissions
     dataControlLambda.grantInvoke(ingestLambda);
@@ -189,6 +190,13 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       effect: iam.Effect.ALLOW,
       actions: ['cloudwatch:GetMetricStatistics'],
       resources: ['*'],
+    }));
+
+    // Grant Ingest Lambda permission to query CloudWatch Logs
+    ingestLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['logs:StartQuery', 'logs:GetQueryResults'],
+      resources: ['arn:aws:logs:*:*:log-group:/aws/apigateway/bluesky-feed-jp:*'],
     }));
 
     // Grant DataControl Lambda permission to write stats to S3
@@ -228,6 +236,33 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
       integration: new apigatewayv2_integrations.HttpLambdaIntegration('GetFeedIntegration', getFeedLambda),
     });
+
+    // === API Gateway Access Logging ===
+    const apiAccessLogGroup = new logs.LogGroup(this, 'ApiAccessLogGroup', {
+      logGroupName: '/aws/apigateway/bluesky-feed-jp',
+      retention: logs.RetentionDays.TWO_WEEKS,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const apiAccessLogRole = new iam.Role(this, 'ApiAccessLogRole', {
+      assumedBy: new iam.ServicePrincipal('apigateway.amazonaws.com'),
+    });
+
+    apiAccessLogRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['logs:CreateLogDelivery', 'logs:GetLogDelivery', 'logs:UpdateLogDelivery', 'logs:DeleteLogDelivery', 'logs:ListLogDeliveries', 'logs:PutResourcePolicy', 'logs:DescribeResourcePolicies', 'logs:DescribeLogGroups'],
+        resources: ['*'],
+      })
+    );
+
+    // Configure access logging on the default stage
+    const stage = httpApi.defaultStage!;
+    const cfnStage = stage.node.defaultChild as apigatewayv2.CfnStage;
+    cfnStage.accessLogSettings = {
+      destinationArn: apiAccessLogGroup.logGroupArn,
+      format: '$context.requestId $context.extendedRequestId $context.identity.sourceIp $context.requestTime $context.httpMethod $context.routeKey $context.status $context.responseLength',
+    };
 
     // === EventBridge Scheduling ===
     const ingestRule = new events.Rule(this, 'IngestScheduleRule', {
