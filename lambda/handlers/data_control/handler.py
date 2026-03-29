@@ -450,8 +450,10 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
             continue
 
         # Calculate visible_ts: distribute posts across batch_spread_seconds window
+        # Reverse order: older posts appear first (idx=0 = oldest), newer posts later (idx=max = newest)
         if items_count > 1:
-            offset = (idx / (items_count - 1)) * batch_spread_seconds
+            reverse_idx = items_count - 1 - idx
+            offset = (reverse_idx / (items_count - 1)) * batch_spread_seconds
         else:
             offset = 0
         visible_ts = now + offset
@@ -503,12 +505,13 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
             continue
 
         # Calculate visible_ts: distribute posts with early concentration, sparse later
-        # Using exponential distribution: (1 - (1 - idx/(count-1))^exponent)
-        # exponent < 1: concentrates early, exponent > 1: spreads later
+        # Using exponential distribution: (1 - (1 - reverse_idx/(count-1))^exponent)
+        # Reverse order: older posts appear first, newer posts later
         config = get_config()
         spread_exponent = config.get("scheduling", {}).get("stablehashtag_spread_exponent", 0.5)
         if stablehashtag_count > 1:
-            offset = batch_spread_seconds * top_n * (1 - (1 - idx / (stablehashtag_count - 1)) ** spread_exponent)
+            reverse_idx = stablehashtag_count - 1 - idx
+            offset = batch_spread_seconds * top_n * (1 - (1 - reverse_idx / (stablehashtag_count - 1)) ** spread_exponent)
         else:
             offset = 0
         visible_ts = now + offset
