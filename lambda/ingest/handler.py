@@ -18,7 +18,7 @@ s3_client = boto3.client("s3")
 # CloudWatch Logs query function for feed-specific calls
 def get_getfeed_calls_by_feed_type(target_date):
     """
-    Query API Gateway access logs from CloudWatch Logs to count GetFeed calls by feed type.
+    Query GetFeed Lambda logs from CloudWatch Logs to count calls by feed type.
 
     Args:
         target_date: Date string in format YYYY-MM-DD
@@ -35,22 +35,23 @@ def get_getfeed_calls_by_feed_type(target_date):
         start_time_s = int(start_time.timestamp())
         end_time_s = int(end_time.timestamp())
 
-        log_group = '/aws/apigateway/bluesky-feed-jp'
+        # GetFeed Lambda log group
+        log_group = '/aws/lambda/BlueskyFeedJpStack-GetFeedLambda76B14ED4-MohOv6auxFqB'
 
-        print(f"[LOGS] Querying API Gateway access logs for {target_date}")
+        print(f"[LOGS] Querying GetFeed Lambda logs for {target_date}")
 
-        # Query for each feed type
+        # Query for each feed type from [FEED_ACCESS] logs
         query_patterns = {
-            'raw_calls': 'feed=raw',
-            'dense_calls': 'feed=dense',
-            'stablehashtag_calls': 'feed=stablehashtag'
+            'raw_calls': 'feed_type=raw',
+            'dense_calls': 'feed_type=dense',
+            'stablehashtag_calls': 'feed_type=stablehashtag'
         }
 
         results = {'total_invocations': 0}
 
         for field_name, pattern in query_patterns.items():
             try:
-                query_string = f'fields @timestamp | filter @message like /{pattern}/ | stats count() as count'
+                query_string = f'fields @timestamp | filter @message like /\\[FEED_ACCESS\\].*{pattern}/ | stats count() as count'
                 response = logs_client.start_query(
                     logGroupName=log_group,
                     startTime=start_time_s,
@@ -601,6 +602,7 @@ def lambda_handler(event, context):
         current_hashtag, next_state = get_current_hashtag(statistics_bucket)
         items_stablehashtag = []
         stablehashtag_posts_count = 0
+        stats_payload_stablehashtag = None
 
         if current_hashtag:
             search_query_2 = f"lang:ja #{current_hashtag}"
@@ -619,23 +621,20 @@ def lambda_handler(event, context):
         else:
             print("[QUERY2] No current hashtag available, skipping stablehashtag query")
 
-        # Combine items for statistics (raw+stablehashtag)
-        items = items_raw + items_stablehashtag
-
         print(f"\n=== Processing Summary ===")
-        print(f"Total fetched (raw+stablehashtag): {len(posts_1) + stablehashtag_posts_count}")
-        print(f"  - Raw posts: {len(posts_1)}")
-        print(f"  - Stabletag posts: {stablehashtag_posts_count}")
+        print(f"Raw posts: {len(posts_1)}")
         print(f"  - Invalid fields: {skipped_by_reason['invalid_fields']}")
         print(f"  - Moderation labels: {skipped_by_reason['moderation_labels']}")
         print(f"  - Non-Japanese: {skipped_by_reason['non_japanese']}")
         print(f"  - Spam hashtags (5+): {skipped_by_reason['spam_hashtags']}")
-        print(f"  - Passed filters: {len(items_raw + items_stablehashtag)}")
+        print(f"  - Passed filters: {len(items_raw)}")
 
-        # Badword statistics
-        print(f"\n=== Badword Analysis ===")
-        badword_hit_rate = (badword_stats['total_posts_with_badwords'] / len(items) * 100) if items else 0
-        print(f"Posts with badwords: {badword_stats['total_posts_with_badwords']} / {len(items)} ({badword_hit_rate:.1f}%)")
+        print(f"\nStablehashtag posts: {stablehashtag_posts_count}")
+        print(f"  - Passed filters: {len(items_stablehashtag)}")
+
+        print(f"\n=== Badword Analysis (RAW) ===")
+        badword_hit_rate = (badword_stats['total_posts_with_badwords'] / len(items_raw) * 100) if items_raw else 0
+        print(f"Posts with badwords: {badword_stats['total_posts_with_badwords']} / {len(items_raw)} ({badword_hit_rate:.1f}%)")
         print(f"Total badword matches: {badword_stats['total_badword_matches']}")
         if badword_stats['total_posts_with_badwords'] > 0:
             avg_matches_per_hit = badword_stats['total_badword_matches'] / badword_stats['total_posts_with_badwords']
@@ -646,9 +645,9 @@ def lambda_handler(event, context):
                 count = badword_stats['badword_distribution'][match_count]
                 print(f"  - {match_count} match(es): {count} post(s)")
 
-        print(f"\n=== Dense Feed Statistics ===")
-        dense_rate = (len(dense_texts) / len(items) * 100) if items else 0
-        print(f"Dense posts: {len(dense_texts)} / {len(items)} ({dense_rate:.1f}%)")
+        print(f"\n=== Dense Feed Statistics (RAW) ===")
+        dense_rate = (len(dense_texts) / len(items_raw) * 100) if items_raw else 0
+        print(f"Dense posts: {len(dense_texts)} / {len(items_raw)} ({dense_rate:.1f}%)")
         print(f"=========================\n")
 
         # Calculate total skipped
