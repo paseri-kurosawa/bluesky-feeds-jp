@@ -292,7 +292,7 @@ def save_badword_texts_to_s3(bucket, dense_texts, dense_base_forms):
         raise
 
 
-def backfill_previous_day(bucket, getfeed_stats):
+def backfill_previous_day(bucket, getfeed_stats_raw_dense, getfeed_stats_stablehashtag):
     """
     Check if previous day's daily stats exist. If not, backfill from batch files.
     Saves to stats/daily/raw-dense/ and stats/daily/stablehashtag/.
@@ -324,7 +324,7 @@ def backfill_previous_day(bucket, getfeed_stats):
                             yesterday_batches_raw.append(obj['Key'])
 
             if yesterday_batches_raw:
-                backfilled_entry_raw = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches_raw, getfeed_stats)
+                backfilled_entry_raw = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches_raw, getfeed_stats_raw_dense)
                 if backfilled_entry_raw:
                     s3_client.put_object(
                         Bucket=bucket,
@@ -355,7 +355,7 @@ def backfill_previous_day(bucket, getfeed_stats):
                             yesterday_batches_stablehashtag.append(obj['Key'])
 
             if yesterday_batches_stablehashtag:
-                backfilled_entry_stablehashtag = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches_stablehashtag, getfeed_stats)
+                backfilled_entry_stablehashtag = aggregate_batch_files_for_date(bucket, yesterday_date, yesterday_batches_stablehashtag, getfeed_stats_stablehashtag)
                 if backfilled_entry_stablehashtag:
                     s3_client.put_object(
                         Bucket=bucket,
@@ -1033,9 +1033,12 @@ def lambda_handler(event, context):
     dense_texts_stablehashtag = event.get("dense_texts_stablehashtag", [])
     dense_base_forms = event.get("dense_base_forms", [])
     dense_base_forms_stablehashtag = event.get("dense_base_forms_stablehashtag", [])
-    getfeed_stats = event.get("getfeed_stats", {"total_invocations": 0})
     hashtags = event.get("hashtags", {})
     top_n = event.get("top_n")
+
+    # Extract getfeed_stats from batch stats
+    getfeed_stats_raw_dense = batch_stats_raw.get("getfeed_stats", {"total_invocations": 0})
+    getfeed_stats_stablehashtag = batch_stats_stablehashtag.get("getfeed_stats", {"total_invocations": 0})
 
     if not items_raw and not items_stablehashtag:
         return {"stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0, "note": "no items"}
@@ -1083,7 +1086,7 @@ def lambda_handler(event, context):
 
     # === OPTIONAL: Backfill previous day's daily stats if missing (BEFORE dashboard update) ===
     try:
-        backfill_previous_day(STATISTICS_BUCKET, getfeed_stats)
+        backfill_previous_day(STATISTICS_BUCKET, getfeed_stats_raw_dense, getfeed_stats_stablehashtag)
     except Exception as e:
         print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
         import traceback

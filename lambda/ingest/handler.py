@@ -683,8 +683,41 @@ def lambda_handler(event, context):
         # Calculate total skipped
         total_skipped = sum(skipped_by_reason.values())
 
-        # Prepare statistics data for StatsLambda
+        # Check previous day's daily file and query CloudWatch Logs BEFORE building stats_payload
         now_jst = datetime.now(JST)
+        yesterday = now_jst - timedelta(days=1)
+        yesterday_date = yesterday.strftime("%Y-%m-%d")
+
+        # Check if yesterday's daily file exists in STATISTICS_BUCKET (new format: raw-dense and stablehashtag)
+        try:
+            s3_client = boto3.client("s3")
+            statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
+            daily_key_raw_dense = f"stats/daily/raw-dense/stats-{yesterday_date}.json"
+            daily_key_stablehashtag = f"stats/daily/stablehashtag/stats-{yesterday_date}.json"
+
+            # Check if both files exist
+            raw_dense_exists = False
+            stablehashtag_exists = False
+
+            try:
+                s3_client.head_object(Bucket=statistics_bucket, Key=daily_key_raw_dense)
+                raw_dense_exists = True
+            except:
+                pass
+
+            try:
+                s3_client.head_object(Bucket=statistics_bucket, Key=daily_key_stablehashtag)
+                stablehashtag_exists = True
+            except:
+                pass
+
+            # If either daily file is missing, query CloudWatch Logs for feed-specific calls
+            if not raw_dense_exists or not stablehashtag_exists:
+                getfeed_stats_raw_dense, getfeed_stats_stablehashtag = get_getfeed_calls_by_feed_type(yesterday_date)
+        except Exception as e:
+            print(f"[WARN] Failed to check daily files or query CloudWatch: {str(e)}")
+
+        # Prepare statistics data for StatsLambda
         timestamp = now_jst.strftime("%Y%m%d_%H%M%S")
         iso_timestamp = now_jst.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -806,40 +839,6 @@ def lambda_handler(event, context):
             for tag in hashtags:
                 normalized_tag = unicodedata.normalize("NFC", tag).lower()
                 hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
-
-        # Check previous day's daily file and query CloudWatch Logs if needed
-        now_jst = datetime.now(JST)
-        yesterday = now_jst - timedelta(days=1)
-        yesterday_date = yesterday.strftime("%Y-%m-%d")
-
-        # Check if yesterday's daily file exists in STATISTICS_BUCKET (new format: raw-dense and stablehashtag)
-        try:
-            s3_client = boto3.client("s3")
-            statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
-            daily_key_raw_dense = f"stats/daily/raw-dense/stats-{yesterday_date}.json"
-            daily_key_stablehashtag = f"stats/daily/stablehashtag/stats-{yesterday_date}.json"
-
-            # Check if both files exist
-            raw_dense_exists = False
-            stablehashtag_exists = False
-
-            try:
-                s3_client.head_object(Bucket=statistics_bucket, Key=daily_key_raw_dense)
-                raw_dense_exists = True
-            except:
-                pass
-
-            try:
-                s3_client.head_object(Bucket=statistics_bucket, Key=daily_key_stablehashtag)
-                stablehashtag_exists = True
-            except:
-                pass
-
-            # If either daily file is missing, query CloudWatch Logs for feed-specific calls
-            if not raw_dense_exists or not stablehashtag_exists:
-                getfeed_stats_raw_dense, getfeed_stats_stablehashtag = get_getfeed_calls_by_feed_type(yesterday_date)
-        except Exception as e:
-            print(f"[WARN] Failed to check daily files or query CloudWatch: {str(e)}")
 
         # Invoke Store Lambda asynchronously
         if items_raw or items_stablehashtag:
