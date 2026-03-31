@@ -839,7 +839,7 @@ def lambda_handler(event, context):
             if not raw_dense_exists or not stablehashtag_exists:
                 getfeed_stats_raw_dense, getfeed_stats_stablehashtag = get_getfeed_calls_by_feed_type(yesterday_date)
         except Exception as e:
-            pass
+            print(f"[WARN] Failed to check daily files or query CloudWatch: {str(e)}")
 
         # Invoke Store Lambda asynchronously
         if items_raw or items_stablehashtag:
@@ -855,7 +855,6 @@ def lambda_handler(event, context):
                 "dense_texts_stablehashtag": dense_texts_stablehashtag,
                 "dense_base_forms": dense_base_forms,
                 "dense_base_forms_stablehashtag": dense_base_forms_stablehashtag,
-                "getfeed_stats": getfeed_stats,
                 "hashtags": hashtag_counts,
                 "top_n": top_n
             }
@@ -880,8 +879,7 @@ def lambda_handler(event, context):
             "fetched_stablehashtag": stablehashtag_posts_count,
             "skipped": total_skipped,
             "dense_posts": len(dense_texts),
-            "total_base_forms": len(dense_base_forms),
-            "getfeed_stats": getfeed_stats
+            "total_base_forms": len(dense_base_forms)
         }
 
     except Exception as e:
