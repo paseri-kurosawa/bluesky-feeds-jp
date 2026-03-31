@@ -24,7 +24,9 @@ def get_getfeed_calls_by_feed_type(target_date):
         target_date: Date string in format YYYY-MM-DD (JST)
 
     Returns:
-        Dict with raw_calls, dense_calls, stablehashtag_calls, total_invocations
+        Tuple of (getfeed_stats_raw_dense, getfeed_stats_stablehashtag)
+        - getfeed_stats_raw_dense: Dict with raw_calls, dense_calls, total_invocations (raw + dense)
+        - getfeed_stats_stablehashtag: Dict with stablehashtag_calls, total_invocations
     """
     try:
         # Parse target date as JST
@@ -51,7 +53,7 @@ def get_getfeed_calls_by_feed_type(target_date):
             'stablehashtag_calls': 'feed_type=stablehashtag'
         }
 
-        results = {'total_invocations': 0}
+        results = {}
 
         for field_name, pattern in query_patterns.items():
             try:
@@ -75,26 +77,39 @@ def get_getfeed_calls_by_feed_type(target_date):
                                     if field['field'] == 'count':
                                         count = int(field['value'])
                         results[field_name] = count
-                        results['total_invocations'] += count
                         break
                     time.sleep(1)
             except Exception as e:
                 print(f"[LOGS] Error querying {field_name}: {str(e)}")
                 results[field_name] = 0
 
-        print(f"[LOGS] Feed calls for {target_date}: raw={results.get('raw_calls', 0)}, dense={results.get('dense_calls', 0)}, stablehashtag={results.get('stablehashtag_calls', 0)}")
-        return results
+        raw_calls = results.get('raw_calls', 0)
+        dense_calls = results.get('dense_calls', 0)
+        stablehashtag_calls = results.get('stablehashtag_calls', 0)
+
+        # Build separate getfeed_stats for raw-dense and stablehashtag
+        getfeed_stats_raw_dense = {
+            'raw_calls': raw_calls,
+            'dense_calls': dense_calls,
+            'total_invocations': raw_calls + dense_calls
+        }
+
+        getfeed_stats_stablehashtag = {
+            'stablehashtag_calls': stablehashtag_calls,
+            'total_invocations': stablehashtag_calls
+        }
+
+        print(f"[LOGS] Feed calls for {target_date}: raw={raw_calls}, dense={dense_calls}, stablehashtag={stablehashtag_calls}")
+        return getfeed_stats_raw_dense, getfeed_stats_stablehashtag
 
     except Exception as e:
         print(f"[LOGS] Error querying feed calls for {target_date}: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {
-            'raw_calls': 0,
-            'dense_calls': 0,
-            'stablehashtag_calls': 0,
-            'total_invocations': 0
-        }
+        return (
+            {'raw_calls': 0, 'dense_calls': 0, 'total_invocations': 0},
+            {'stablehashtag_calls': 0, 'total_invocations': 0}
+        )
 
 # Load configuration
 def load_config():
@@ -713,6 +728,7 @@ def lambda_handler(event, context):
                 "dense_posts": len(dense_texts),
                 "dense_rate": round(dense_rate_raw, 1)
             },
+            "getfeed_stats": getfeed_stats_raw_dense,
             "version": "1.0"
         }
 
@@ -767,6 +783,7 @@ def lambda_handler(event, context):
                 "dense_posts": len(dense_texts_stablehashtag),
                 "dense_rate": round(dense_rate_stablehashtag, 1)
             },
+            "getfeed_stats": getfeed_stats_stablehashtag,
             "version": "1.0"
         }
 
@@ -784,9 +801,13 @@ def lambda_handler(event, context):
         yesterday = now_jst - timedelta(days=1)
         yesterday_date = yesterday.strftime("%Y-%m-%d")
 
-        getfeed_stats = {
+        # Initialize separated getfeed_stats for raw-dense and stablehashtag
+        getfeed_stats_raw_dense = {
             "raw_calls": 0,
             "dense_calls": 0,
+            "total_invocations": 0
+        }
+        getfeed_stats_stablehashtag = {
             "stablehashtag_calls": 0,
             "total_invocations": 0
         }
@@ -816,7 +837,7 @@ def lambda_handler(event, context):
 
             # If either daily file is missing, query CloudWatch Logs for feed-specific calls
             if not raw_dense_exists or not stablehashtag_exists:
-                getfeed_stats = get_getfeed_calls_by_feed_type(yesterday_date)
+                getfeed_stats_raw_dense, getfeed_stats_stablehashtag = get_getfeed_calls_by_feed_type(yesterday_date)
         except Exception as e:
             pass
 
