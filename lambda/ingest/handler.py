@@ -589,6 +589,17 @@ def lambda_handler(event, context):
     try:
         from atproto import Client
 
+        # Initialize separated getfeed_stats for raw-dense and stablehashtag (will be updated later)
+        getfeed_stats_raw_dense = {
+            "raw_calls": 0,
+            "dense_calls": 0,
+            "total_invocations": 0
+        }
+        getfeed_stats_stablehashtag = {
+            "stablehashtag_calls": 0,
+            "total_invocations": 0
+        }
+
         # Get credentials from Secrets Manager
         credentials = get_bsky_credentials()
         bsky_handle = credentials["handle"]
@@ -800,17 +811,6 @@ def lambda_handler(event, context):
         now_jst = datetime.now(JST)
         yesterday = now_jst - timedelta(days=1)
         yesterday_date = yesterday.strftime("%Y-%m-%d")
-
-        # Initialize separated getfeed_stats for raw-dense and stablehashtag
-        getfeed_stats_raw_dense = {
-            "raw_calls": 0,
-            "dense_calls": 0,
-            "total_invocations": 0
-        }
-        getfeed_stats_stablehashtag = {
-            "stablehashtag_calls": 0,
-            "total_invocations": 0
-        }
 
         # Check if yesterday's daily file exists in STATISTICS_BUCKET (new format: raw-dense and stablehashtag)
         try:
