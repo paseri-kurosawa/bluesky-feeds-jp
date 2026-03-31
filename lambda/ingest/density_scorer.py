@@ -471,7 +471,7 @@ def apply_attribute_adjustments(avg_norm: float, is_reply: bool, has_images: boo
         if badword_count > 0:
             # Apply penalty using exponential function: adjusted_norm *= exp(-coefficient * count)
             # coefficient is configurable in config.json
-            config = get_config()
+            config = load_config()
             coefficient = config.get("scoring", {}).get("attributes", {}).get("badwords", {}).get("penalty", {}).get("coefficient", 0.5)
             multiplier = math.exp(-coefficient * badword_count)
             adjusted_norm *= multiplier

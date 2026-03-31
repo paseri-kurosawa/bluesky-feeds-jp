@@ -34,6 +34,11 @@ def get_batch_spread_seconds():
     config = get_config()
     return int(config["scheduling"]["batch_spread_seconds"])
 
+def get_getfeed_function_name():
+    """Get GetFeed Lambda function name from config.json"""
+    config = get_config()
+    return config["aws_lambda"]["getfeed_function_name"]
+
 # === AWS Clients ===
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
@@ -88,13 +93,14 @@ def get_getfeed_invocations_for_date(target_date):
 
         # Query CloudWatch Metrics for GetFeedLambda Invocations
         # Use 1-hour period and sum across all hours in the day
+        getfeed_function_name = get_getfeed_function_name()
         response = cloudwatch_client.get_metric_statistics(
             Namespace='AWS/Lambda',
             MetricName='Invocations',
             Dimensions=[
                 {
                     'Name': 'FunctionName',
-                    'Value': 'BlueskyFeedJpStack-GetFeedLambda76B14ED4-DfIhJgHN7YXZ'
+                    'Value': getfeed_function_name
                 }
             ],
             StartTime=start_time_utc,

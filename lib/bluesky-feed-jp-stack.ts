@@ -143,7 +143,7 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../lambda/ingest')),
       timeout: cdk.Duration.seconds(300),
       memorySize: 3008,
-      logRetention: logs.RetentionDays.TWO_WEEKS,
+      logRetention: logs.RetentionDays.ONE_WEEK,
       environment: {
         BSKY_SECRET_NAME: bskySecret.secretName,
         S3_BUCKET: badwordBucket.bucketName,
@@ -192,11 +192,13 @@ export class BlueskyFeedJpStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Grant Ingest Lambda permission to query CloudWatch Logs
+    // Grant Ingest Lambda permission to query CloudWatch Logs (GetFeed Lambda logs)
     ingestLambda.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['logs:StartQuery', 'logs:GetQueryResults'],
-      resources: ['arn:aws:logs:*:*:log-group:/aws/apigateway/bluesky-feed-jp:*'],
+      resources: [
+        `arn:aws:logs:*:*:log-group:/aws/lambda/${getFeedLambda.functionName}:*`,
+      ],
     }));
 
     // Grant DataControl Lambda permission to write stats to S3

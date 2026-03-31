@@ -120,6 +120,9 @@ def lambda_handler(event, context):
                 "body": json.dumps({"error": f"Invalid feed type '{feed_type}'. Must be 'raw', 'dense', or 'stablehashtag'."})
             }
 
+        # Log feed access for metrics collection
+        print(f"[FEED_ACCESS] feed_type={feed_type}")
+
         # Select ZSET key
         feed_key = f"feed:{feed_type}:jp:v1"
 

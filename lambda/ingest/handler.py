@@ -21,22 +21,26 @@ def get_getfeed_calls_by_feed_type(target_date):
     Query GetFeed Lambda logs from CloudWatch Logs to count calls by feed type.
 
     Args:
-        target_date: Date string in format YYYY-MM-DD
+        target_date: Date string in format YYYY-MM-DD (JST)
 
     Returns:
         Dict with raw_calls, dense_calls, stablehashtag_calls, total_invocations
     """
     try:
+        # Parse target date as JST
         date_obj = datetime.strptime(target_date, "%Y-%m-%d")
-        start_time = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-        # Convert to Unix timestamp in seconds
-        start_time_s = int(start_time.timestamp())
-        end_time_s = int(end_time.timestamp())
+        # Create JST-aware datetime for the entire day (00:00 - 23:59:59 JST)
+        start_time_jst = date_obj.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=JST)
+        end_time_jst = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=JST)
 
-        # GetFeed Lambda log group
-        log_group = '/aws/lambda/BlueskyFeedJpStack-GetFeedLambda76B14ED4-MohOv6auxFqB'
+        # Convert JST to Unix timestamp (UTC)
+        start_time_s = int(start_time_jst.timestamp())
+        end_time_s = int(end_time_jst.timestamp())
+
+        # GetFeed Lambda log group from config
+        config = load_config()
+        log_group = config.get("aws_lambda", {}).get("getfeed_log_group", "")
 
         print(f"[LOGS] Querying GetFeed Lambda logs for {target_date}")
 
@@ -787,16 +791,31 @@ def lambda_handler(event, context):
             "total_invocations": 0
         }
 
-        # Check if yesterday's daily file exists in STATISTICS_BUCKET
+        # Check if yesterday's daily file exists in STATISTICS_BUCKET (new format: raw-dense and stablehashtag)
         try:
             s3_client = boto3.client("s3")
             statistics_bucket = os.environ.get("STATISTICS_BUCKET", "")
-            daily_key = f"stats/daily/stats-{yesterday_date}.json"
-            s3_client.head_object(Bucket=statistics_bucket, Key=daily_key)
-        except ClientError as e:
-            # Check if it's a 404 (NoSuchKey)
-            if e.response['Error']['Code'] == '404' or e.response['Error']['Code'] == 'NoSuchKey':
-                # Daily file doesn't exist, query CloudWatch Logs for feed-specific calls
+            daily_key_raw_dense = f"stats/daily/raw-dense/stats-{yesterday_date}.json"
+            daily_key_stablehashtag = f"stats/daily/stablehashtag/stats-{yesterday_date}.json"
+
+            # Check if both files exist
+            raw_dense_exists = False
+            stablehashtag_exists = False
+
+            try:
+                s3_client.head_object(Bucket=statistics_bucket, Key=daily_key_raw_dense)
+                raw_dense_exists = True
+            except:
+                pass
+
+            try:
+                s3_client.head_object(Bucket=statistics_bucket, Key=daily_key_stablehashtag)
+                stablehashtag_exists = True
+            except:
+                pass
+
+            # If either daily file is missing, query CloudWatch Logs for feed-specific calls
+            if not raw_dense_exists or not stablehashtag_exists:
                 getfeed_stats = get_getfeed_calls_by_feed_type(yesterday_date)
         except Exception as e:
             pass

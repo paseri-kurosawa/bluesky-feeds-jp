@@ -3,6 +3,11 @@
   "_note_1": "すべてのポスト属性調整（reply, images, hashtags）は Sigmoid 正規化【前】に適用されます。",
   "_note_2": "調整後の avg_norm は Sigmoid 関数によって 0-1 スケールに正規化されます。",
   "_note_3": "算式: normalized_score = 1 / (1 + e^(-steepness * (adjusted_norm - midpoint)))",
+  "aws_lambda": {
+    "description": "AWS Lambda 関数・ログ設定（環境依存の値）",
+    "getfeed_log_group": "/aws/lambda/BlueskyFeedJpStack-GetFeedLambda76B14ED4-MohOv6auxFqB",
+    "getfeed_log_group_note": "CloudWatch Logs クエリで使用。cdk deploy による自動生成値。"
+  },
   "search": {
     "description": "Bluesky 検索パラメータ",
     "query": "lang:ja",
