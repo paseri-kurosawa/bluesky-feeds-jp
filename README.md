@@ -106,17 +106,17 @@ cdk deploy --require-approval=never
 
 ### 環境変数
 
-`.env` または環境設定で以下を指定：
+`.env` で以下を指定：
 
 ```
-BSKY_HANDLE=your-handle
-BSKY_APP_PASSWORD=your-password
-FEED_DID=did:web:your-domain
-SERVICE_ENDPOINT=https://your-domain
-DENSITY_THRESHOLD=0.6
 CDK_DEFAULT_ACCOUNT=your-aws-account-id
 CDK_DEFAULT_REGION=ap-northeast-1
+FEED_DID=did:web:your-domain
+SERVICE_ENDPOINT=https://your-domain
+VALKEY_ENDPOINT=your-valkey-endpoint
 ```
+
+Bluesky クレデンシャル（`BSKY_HANDLE`、`BSKY_APP_PASSWORD`）は AWS Secrets Manager に保存します。
 
 ## ファイル構成
 
