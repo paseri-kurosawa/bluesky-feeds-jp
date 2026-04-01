@@ -73,7 +73,7 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
   - Get Feed: Valkeyキャッシュ参照で Raw/Dense フィード提供
   - Ingest: Bluesky API検索 → スコアリング → DataControlへ非同期呼び出し（EventBridge 10分ごと）
   - DataControl: スコアリング結果をValkeyに格納 + 統計JSON生成
-- **Valkey Serverless**: キャッシュ層（メモリ内スコア保持）
+- **Valkey Serverless**: キャッシュ層（ポストメタデータ: URI、タイムスタンプ、スコア等をメモリ内に保持）
 - **S3**:
   - `bluesky-feed-badword-analysis-*`: バッドワードデータ
   - `bluesky-feed-dashboard-*`: ダッシュボード & 統計データ
@@ -109,11 +109,11 @@ cdk deploy --require-approval=never
 `.env` で以下を指定：
 
 ```
-CDK_DEFAULT_ACCOUNT=your-aws-account-id
-CDK_DEFAULT_REGION=ap-northeast-1
-FEED_DID=did:web:your-domain
-SERVICE_ENDPOINT=https://your-domain
-VALKEY_ENDPOINT=your-valkey-endpoint
+CDK_DEFAULT_ACCOUNT=<your-aws-account-id>
+CDK_DEFAULT_REGION=<your-aws-region>
+FEED_DID=did:web:<your-domain>
+SERVICE_ENDPOINT=https://<your-domain>
+VALKEY_ENDPOINT=<your-valkey-endpoint>
 ```
 
 Bluesky クレデンシャル（`BSKY_HANDLE`、`BSKY_APP_PASSWORD`）は AWS Secrets Manager に保存します。
