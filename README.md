@@ -27,7 +27,7 @@
 - **属性調整**:
   - リプライ: スコアを減少（返信は重要度低）
   - 画像: スコアを増加（画像付きは有用）
-  - ハッシュタグ: ルールベースの調整（多いほど影響大）
+  - ハッシュタグ: ルールベースの調整（適切な量は有用）
 - **バッドワード**: 見出し語ベースのマッチング（形態素解析Janome）、マッチ数に応じて指数関数的にスコア減少
   - バッドワード辞書は S3 (`badwords/dictionary.txt`) から読み込み
   - **定義**: 暴力的表現、差別・ヘイト、人格攻撃、嫌がらせ、ハラスメント、政治的スキャンダルなど、否定的な感情や害を想起させる語彙
@@ -42,8 +42,9 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
 ```
 
 ### 機能
-- **Latest Report**: 最新バッチ実行分の統計（Processing Summary、Badword Analysis、Dense Feed Statistics）
-- **Processing Trends**: 過去の日次集計データから時系列グラフを表示（Total Fetched、Passed Filters、Dense Rate）
+- **Latest Report**: 最新バッチ実行分の統計
+  - Processing Summary: Total Fetched、Invalid Fields、Moderation Labels、Non-Japanese、Spam Hashtags、Passed Filters、Badword Analysis、Dense Posts、Dense Rate
+- **Processing Trends**: 過去の日次集計データから時系列グラフを表示
 - **Distribution Charts**: 2つの円グラフで可視化
   - Filter Breakdown: Passed Filters / Moderation Labels / Non-Japanese の内訳
   - Dense Feed Ratio: Dense Posts / Other Posts の比率
@@ -54,11 +55,7 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
 - JSON形式の統計ファイルをブラウザで解析
 
 ### 統計データ構成
-統計ログはS3 (`bluesky-feed-dashboard-878311109818/stats/`) に3段階で保存：
-
-- `batch/stats_YYYYMMDD_HHMMSS.json`: 各実行分の生統計
-- `daily/stats-YYYY-MM-DD.json`: 日次集計（複数バッチを加算集計、前日分のみ）
-- `summary/dashboard.json`: ダッシュボード用の統合ファイル（最新バッチ + 前日分の日次データ）
+統計ログはS3に保存されます。ダッシュボードは自動更新されたコンポーネントJSONから最新データを取得・表示します。
 
 統計更新は自動化されており、手動更新は不要です。
 
@@ -78,15 +75,10 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
   - DataControl: スコアリング結果をValkeyに格納 + 統計JSON生成
 - **Valkey Serverless**: キャッシュ層（メモリ内スコア保持）
 - **S3**:
-  - `bluesky-feed-badword-analysis-*`: バッドワード辞書・分析ログ置き場
-    - `badword-analysis/dense_posts_YYYYMMDD_HHMMSS.txt`: 各実行の密度スコア分析ログ
-  - `bluesky-feed-dashboard-*`: ダッシュボード & 統計データ一元化
-    - `stats/batch/stats_YYYYMMDD_HHMMSS.json`: 各実行の統計JSON
-    - `stats/daily/stats-YYYY-MM-DD.json`: 日次集計JSON
-    - `components/`: ダッシュボードコンポーネント用JSON（latest_report, processing_trends 等）
-    - `hashtags/batch/`: 各実行のハッシュタグ分析JSON
-    - `hashtags/daily/`: ハッシュタグ日次集計
-    - `hashtags/summary/stable_hashtags.json`: ハッシュタグリスト
+  - `bluesky-feed-badword-analysis-*`: バッドワードデータ
+  - `bluesky-feed-dashboard-*`: ダッシュボード & 統計データ
+    - `stats/`: バッチ統計ファイル
+    - `components/`: ダッシュボード用コンポーネント JSON
     - `index.html`, `assets/`: React SPA ファイル
 - **VPC**: Lambda関数間の通信と Valkey への安全な接続確保
 - **CloudWatch Logs**: Lambda実行ログとメトリクス監視
@@ -143,7 +135,8 @@ CDK_DEFAULT_REGION=ap-northeast-1
 │   ├── src/
 │   │   ├── App.jsx                  # メインアプリケーション
 │   │   ├── components/              # グラフ・テーブルコンポーネント
-│   │   └── index.css
+│   │   └── ...
+│   ├── index.html
 │   ├── vite.config.js
 │   └── package.json
 ├── scripts/
