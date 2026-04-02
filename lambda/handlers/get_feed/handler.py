@@ -1,14 +1,12 @@
-import os
 import json
 import base64
 import time
 import redis
+import os
 
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
-DEFAULT_LIMIT = 20
-MAX_LIMIT = 100
 
-# Load pseudo-stream configuration
+# Load configuration from config.json
 def load_config():
     """Load configuration from config.json"""
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -23,6 +21,10 @@ def get_config():
     if _config is None:
         _config = load_config()
     return _config
+
+config = get_config()
+DEFAULT_LIMIT = config["feed"]["default_limit"]
+MAX_LIMIT = config["feed"]["max_limit"]
 
 r = redis.Redis(
     host=VALKEY_ENDPOINT,

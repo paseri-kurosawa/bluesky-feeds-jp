@@ -39,6 +39,7 @@ def get_getfeed_function_name():
     config = get_config()
     return config["aws_lambda"]["getfeed_function_name"]
 
+
 # === AWS Clients ===
 VALKEY_ENDPOINT = os.environ.get("VALKEY_ENDPOINT", "localhost")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")

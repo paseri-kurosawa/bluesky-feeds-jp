@@ -1,7 +1,6 @@
 {
-  "pseudo_stream": {
-    "description": "Pseudo-streaming configuration for gradual post appearance",
-    "spread_duration_seconds": 1200,
-    "spread_duration_note": "Time window (seconds) over which new batch posts are gradually displayed. 1200s = 20 minutes."
+  "feed": {
+    "default_limit": 20,
+    "max_limit": 100
   }
 }
