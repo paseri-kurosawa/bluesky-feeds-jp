@@ -297,12 +297,14 @@ def backfill_previous_day(bucket, getfeed_stats_raw_dense, getfeed_stats_stableh
     """
     Check if previous day's daily stats exist. If not, backfill from batch files.
     Saves to stats/daily/raw-dense/ and stats/daily/stablehashtag/.
-    Updates components/processing_trends_raw-dense.json and processing_trends_stablehashtag.json.
+    If either was restored, update both processing_trends at the end.
     """
     try:
         now = get_jst_now()
         yesterday = now - timedelta(days=1)
         yesterday_date = yesterday.strftime("%Y-%m-%d")
+
+        restored = False
 
         # === Process QUERY 1 (raw-dense) ===
         daily_key_raw = f"stats/daily/raw-dense/stats-{yesterday_date}.json"
@@ -334,6 +336,7 @@ def backfill_previous_day(bucket, getfeed_stats_raw_dense, getfeed_stats_stableh
                         ContentType="application/json; charset=utf-8"
                     )
                     print(f"[S3] Saved backfilled daily stats (raw-dense) to {daily_key_raw}")
+                    restored = True
 
         # === Process QUERY 2 (stablehashtag) ===
         daily_key_stablehashtag = f"stats/daily/stablehashtag/stats-{yesterday_date}.json"
@@ -365,54 +368,59 @@ def backfill_previous_day(bucket, getfeed_stats_raw_dense, getfeed_stats_stableh
                         ContentType="application/json; charset=utf-8"
                     )
                     print(f"[S3] Saved backfilled daily stats (stablehashtag) to {daily_key_stablehashtag}")
+                    restored = True
 
-        # === Update components/processing_trends_raw-dense.json ===
-        paginator = s3_client.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/raw-dense/")
-        daily_entries_raw = []
-        for page in pages:
-            if 'Contents' in page:
-                for obj in sorted(page['Contents'], key=lambda x: x['Key']):
-                    if obj['Key'].endswith('.json'):
-                        try:
-                            response = s3_client.get_object(Bucket=bucket, Key=obj['Key'])
-                            daily_data = json.loads(response["Body"].read().decode("utf-8"))
-                            daily_entries_raw.append(daily_data)
-                        except Exception as e:
-                            print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
+        # === If either was restored, update both processing_trends ===
+        if restored:
+            # Update components/processing_trends_raw-dense.json
+            paginator = s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/raw-dense/")
+            daily_entries_raw = []
+            for page in pages:
+                if 'Contents' in page:
+                    for obj in sorted(page['Contents'], key=lambda x: x['Key']):
+                        if obj['Key'].endswith('.json'):
+                            try:
+                                response = s3_client.get_object(Bucket=bucket, Key=obj['Key'])
+                                daily_data = json.loads(response["Body"].read().decode("utf-8"))
+                                daily_entries_raw.append(daily_data)
+                            except Exception as e:
+                                print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
 
-        processing_trends_raw_key = "components/processing_trends_raw-dense.json"
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=processing_trends_raw_key,
-            Body=json.dumps(daily_entries_raw, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[S3] Updated processing_trends_raw-dense to {processing_trends_raw_key} with {len(daily_entries_raw)} entries")
+            processing_trends_raw_key = "components/processing_trends_raw-dense.json"
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=processing_trends_raw_key,
+                Body=json.dumps(daily_entries_raw, ensure_ascii=False, indent=2),
+                ContentType="application/json; charset=utf-8"
+            )
+            print(f"[S3] Updated processing_trends_raw-dense to {processing_trends_raw_key} with {len(daily_entries_raw)} entries")
 
-        # === Update components/processing_trends_stablehashtag.json ===
-        paginator = s3_client.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/stablehashtag/")
-        daily_entries_stablehashtag = []
-        for page in pages:
-            if 'Contents' in page:
-                for obj in sorted(page['Contents'], key=lambda x: x['Key']):
-                    if obj['Key'].endswith('.json'):
-                        try:
-                            response = s3_client.get_object(Bucket=bucket, Key=obj['Key'])
-                            daily_data = json.loads(response["Body"].read().decode("utf-8"))
-                            daily_entries_stablehashtag.append(daily_data)
-                        except Exception as e:
-                            print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
+            # Update components/processing_trends_stablehashtag.json
+            paginator = s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(Bucket=bucket, Prefix="stats/daily/stablehashtag/")
+            daily_entries_stablehashtag = []
+            for page in pages:
+                if 'Contents' in page:
+                    for obj in sorted(page['Contents'], key=lambda x: x['Key']):
+                        if obj['Key'].endswith('.json'):
+                            try:
+                                response = s3_client.get_object(Bucket=bucket, Key=obj['Key'])
+                                daily_data = json.loads(response["Body"].read().decode("utf-8"))
+                                daily_entries_stablehashtag.append(daily_data)
+                            except Exception as e:
+                                print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
 
-        processing_trends_stablehashtag_key = "components/processing_trends_stablehashtag.json"
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=processing_trends_stablehashtag_key,
-            Body=json.dumps(daily_entries_stablehashtag, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[S3] Updated processing_trends_stablehashtag to {processing_trends_stablehashtag_key} with {len(daily_entries_stablehashtag)} entries")
+            processing_trends_stablehashtag_key = "components/processing_trends_stablehashtag.json"
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=processing_trends_stablehashtag_key,
+                Body=json.dumps(daily_entries_stablehashtag, ensure_ascii=False, indent=2),
+                ContentType="application/json; charset=utf-8"
+            )
+            print(f"[S3] Updated processing_trends_stablehashtag to {processing_trends_stablehashtag_key} with {len(daily_entries_stablehashtag)} entries")
+        else:
+            print(f"[BACKFILL] No restore needed, skipping trends update")
 
     except Exception as e:
         print(f"[BACKFILL] Error in backfill_previous_day: {str(e)}")
@@ -953,55 +961,6 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
             ContentType="application/json; charset=utf-8"
         )
         print(f"[S3] Saved top_hashtags_1h_from_raw_posts to {top_hashtags_1h_key}")
-
-        # === Aggregate daily files (separated by QUERY) ===
-        # QUERY 1: Aggregate stats/daily/raw-dense/
-        paginator = s3_client.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=STATISTICS_BUCKET, Prefix="stats/daily/raw-dense/")
-        daily_entries_raw = []
-        for page in pages:
-            if 'Contents' in page:
-                for obj in sorted(page['Contents'], key=lambda x: x['Key']):
-                    if obj['Key'].endswith('.json'):
-                        try:
-                            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key=obj['Key'])
-                            daily_data = json.loads(response["Body"].read().decode("utf-8"))
-                            daily_entries_raw.append(daily_data)
-                        except Exception as e:
-                            print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
-
-        processing_trends_raw_key = "components/processing_trends_raw-dense.json"
-        s3_client.put_object(
-            Bucket=STATISTICS_BUCKET,
-            Key=processing_trends_raw_key,
-            Body=json.dumps(daily_entries_raw, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[S3] Updated processing_trends_raw-dense to {processing_trends_raw_key} with {len(daily_entries_raw)} entries")
-
-        # QUERY 2: Aggregate stats/daily/stablehashtag/
-        paginator = s3_client.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=STATISTICS_BUCKET, Prefix="stats/daily/stablehashtag/")
-        daily_entries_stablehashtag = []
-        for page in pages:
-            if 'Contents' in page:
-                for obj in sorted(page['Contents'], key=lambda x: x['Key']):
-                    if obj['Key'].endswith('.json'):
-                        try:
-                            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key=obj['Key'])
-                            daily_data = json.loads(response["Body"].read().decode("utf-8"))
-                            daily_entries_stablehashtag.append(daily_data)
-                        except Exception as e:
-                            print(f"[WARN] Failed to read {obj['Key']}: {str(e)}")
-
-        processing_trends_stablehashtag_key = "components/processing_trends_stablehashtag.json"
-        s3_client.put_object(
-            Bucket=STATISTICS_BUCKET,
-            Key=processing_trends_stablehashtag_key,
-            Body=json.dumps(daily_entries_stablehashtag, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[S3] Updated processing_trends_stablehashtag to {processing_trends_stablehashtag_key} with {len(daily_entries_stablehashtag)} entries")
 
         return s3_key_raw  # Return raw-dense key as primary
     except Exception as e:
