@@ -921,6 +921,31 @@ def lambda_handler(event, context):
                 normalized_tag = unicodedata.normalize("NFC", tag).lower()
                 hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
 
+        # Filter hashtags by badwords (remove inappropriate tags)
+        # Partial matching: exclude hashtag if it contains any badword
+        try:
+            badwords_config = load_badwords_config()
+            badwords_set = {word.lower() for word in badwords_config.get("badwords", [])}
+
+            filtered_hashtag_counts = {}
+            filtered_out_count = 0
+
+            for tag, count in hashtag_counts.items():
+                tag_lower = tag.lower()
+                # Check if any badword is contained in the hashtag
+                has_badword = any(badword in tag_lower for badword in badwords_set)
+                if not has_badword:
+                    filtered_hashtag_counts[tag] = count
+                else:
+                    filtered_out_count += 1
+
+            hashtag_counts = filtered_hashtag_counts
+
+        except Exception as e:
+            print(f"[HASHTAG FILTER ERROR] Failed to filter hashtags: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
         # Invoke Store Lambda asynchronously
         if items_raw or items_stablehashtag:
             lambda_client = boto3.client("lambda")
@@ -945,14 +970,11 @@ def lambda_handler(event, context):
                     InvocationType="Event",  # Asynchronous
                     Payload=json.dumps(payload),
                 )
-                print(f"[DEBUG_INVOKE] SUCCESS! StatusCode={response['StatusCode']}, RequestId={response.get('ResponseMetadata', {}).get('RequestId', 'N/A')}")
             except Exception as invoke_error:
-                print(f"[DEBUG_INVOKE] ERROR: {str(invoke_error)}")
+                print(f"[ERROR] Invoke failed: {str(invoke_error)}")
                 import traceback
                 traceback.print_exc()
                 raise
-        else:
-            print(f"[DEBUG_INVOKE] SKIPPED: No items to invoke")
 
         return {
             "fetched_raw": len(items_raw),
