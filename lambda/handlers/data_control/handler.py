@@ -602,8 +602,6 @@ def aggregate_1h_hashtags(bucket):
     try:
         now = get_jst_now()
         one_hour_ago = now - timedelta(hours=1)
-        one_hour_ago_str = one_hour_ago.strftime("%Y-%m-%d_%H:%M")
-        now_str = now.strftime("%Y-%m-%d_%H:%M")
 
         # List batch files from past 1 hour
         prefix = f"hashtags/batch/"
@@ -622,8 +620,10 @@ def aggregate_1h_hashtags(bucket):
                 # Extract timestamp from key: hashtags/batch/YYYY-MM-DD_HH:MM.json
                 try:
                     timestamp_str = key.split("/")[-1].replace(".json", "")
+                    # Parse timestamp to datetime for accurate comparison
+                    file_time = datetime.strptime(timestamp_str, "%Y-%m-%d_%H:%M")
                     # Check if within 1 hour range
-                    if one_hour_ago_str <= timestamp_str <= now_str:
+                    if one_hour_ago <= file_time <= now:
                         response = s3_client.get_object(Bucket=bucket, Key=key)
                         batch_data = json.loads(response["Body"].read().decode("utf-8"))
 
@@ -806,11 +806,53 @@ def backfill_hashtag_daily(bucket):
         print(f"[HASHTAG ERROR] Failed to backfill hashtag daily: {str(e)}")
 
 
+def filter_hashtags_by_badwords(hashtags_dict):
+    """
+    Filter hashtags dict by removing tags that match badwords.
+    Ensures hashtag list only contains safe tags (no adult/inappropriate content).
+
+    Args:
+        hashtags_dict: Dict of {tag: count}
+
+    Returns:
+        Filtered dict with only safe hashtags
+    """
+    try:
+        # Import badword checking function from ingest Lambda
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ingest"))
+        from density_scorer import count_badwords_in_tokens
+
+        filtered = {}
+        filtered_out = 0
+
+        for tag, count in hashtags_dict.items():
+            # Tokenize tag and check for badwords
+            badword_count, _ = count_badwords_in_tokens([tag.lower()])
+            if badword_count == 0:
+                filtered[tag] = count
+            else:
+                filtered_out += 1
+                print(f"[HASHTAG FILTER] Removed: #{tag} (badword match)")
+
+        if filtered_out > 0:
+            print(f"[HASHTAG FILTER] Filtered out {filtered_out} hashtags with badwords")
+
+        return filtered
+    except Exception as e:
+        print(f"[HASHTAG FILTER] Error filtering hashtags: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return original dict if filtering fails (fail-safe)
+        return hashtags_dict
+
+
 def aggregate_all_hashtags(bucket):
     """
     Aggregate ALL hashtags from daily files.
     Reads from hashtags/daily/ and sums counts from all daily files.
     Sorts by count (descending).
+    Filters out badwords to ensure only safe hashtags are returned.
 
     Returns: Dict of {tag: count} sorted by count, or {} on failure
     """
@@ -843,6 +885,9 @@ def aggregate_all_hashtags(bucket):
                 except Exception as e:
                     print(f"[ALL HASHTAGS] Error processing {key}: {str(e)}")
                     continue
+
+        # Filter out badwords before sorting
+        aggregated = filter_hashtags_by_badwords(aggregated)
 
         # Sort by count (descending)
         sorted_hashtags = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)
