@@ -765,34 +765,6 @@ def backfill_hashtag_daily(bucket):
                 if top_hashtags_all:
                     print(f"[ALL HASHTAGS] Successfully aggregated {len(top_hashtags_all)} unique hashtags")
 
-                    # === Update rotation/state.json with TOP 100 hashtags ===
-                    try:
-                        # Convert dict to list format for rotation
-                        hashtags_list = [
-                            {"tag": tag, "count": count}
-                            for tag, count in list(top_hashtags_all.items())[:100]
-                        ]
-
-                        rotation_state = {
-                            "current_index": 0,
-                            "last_rotation_time": get_jst_now().isoformat(),
-                            "total_rotations": 0,
-                            "stable_hashtags": hashtags_list
-                        }
-
-                        state_key = "hashtags/rotation/state.json"
-                        s3_client.put_object(
-                            Bucket=bucket,
-                            Key=state_key,
-                            Body=json.dumps(rotation_state, ensure_ascii=False, indent=2),
-                            ContentType="application/json; charset=utf-8"
-                        )
-                        print(f"[ROTATION] Updated rotation/state.json with TOP 100 hashtags")
-                    except Exception as e:
-                        print(f"[ROTATION] Error updating rotation state: {str(e)}")
-                        import traceback
-                        traceback.print_exc()
-
                     # Return the aggregated hashtags for caller to use
                     return top_hashtags_all
                 else:
@@ -977,13 +949,28 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
         print(f"[S3] Saved stable_ranking to {stable_ranking_key}")
 
         # Save 1H hot hashtags to hashtags/datasource/1h_hot.json
+        # Also include last_fired_hot_tag info for single source of truth
         hot_1h_key = "hashtags/datasource/1h_hot.json"
+
+        # Try to load existing state to preserve last_fired_hot_tag
+        last_fired_hot_tag = None
+        last_fired_hot_tag_timestamp = None
+        try:
+            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key=hot_1h_key)
+            existing_data = json.loads(response["Body"].read().decode("utf-8"))
+            last_fired_hot_tag = existing_data.get("last_fired_hot_tag", None)
+            last_fired_hot_tag_timestamp = existing_data.get("last_fired_hot_tag_timestamp", None)
+        except:
+            pass  # File doesn't exist yet or error reading - that's OK
+
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
             Key=hot_1h_key,
             Body=json.dumps({
                 "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "top_hashtags_1h": top_hashtags_1h_array
+                "top_hashtags_1h": top_hashtags_1h_array,
+                "last_fired_hot_tag": last_fired_hot_tag,
+                "last_fired_hot_tag_timestamp": last_fired_hot_tag_timestamp
             }, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )

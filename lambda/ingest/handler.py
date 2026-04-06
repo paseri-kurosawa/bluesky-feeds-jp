@@ -291,43 +291,6 @@ def search_posts_with_retry(client, search_query, search_config, max_retries=3):
                 raise
 
 
-def get_rotation_state(bucket):
-    """Load rotation state from S3"""
-    s3_client = boto3.client("s3")
-    state_key = "hashtags/rotation/state.json"
-
-    try:
-        response = s3_client.get_object(Bucket=bucket, Key=state_key)
-        state = json.loads(response["Body"].read().decode("utf-8"))
-        return state
-    except Exception as e:
-        print(f"[ROTATION] Error loading state: {e}, initializing with default")
-        return {
-            "current_index": 0,
-            "last_rotation_time": datetime.now(JST).isoformat(),
-            "total_rotations": 0,
-            "stable_hashtags": [],
-            "hot_fired_at_index": []
-        }
-
-
-def save_rotation_state(bucket, state):
-    """Save updated rotation state to S3"""
-    s3_client = boto3.client("s3")
-    state_key = "hashtags/rotation/state.json"
-
-    try:
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=state_key,
-            Body=json.dumps(state, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[ROTATION] Updated state: index={state['current_index']}, rotations={state['total_rotations']}")
-    except Exception as e:
-        print(f"[ROTATION] Error saving state: {e}")
-
-
 def load_stable_ranking(bucket):
     """Load stable hashtag ranking from hashtags/datasource/stable_ranking.json"""
     try:
@@ -357,11 +320,11 @@ def load_1h_hot(bucket):
 
 
 def load_last_fired_hot_tag(bucket):
-    """Load last fired hot tag from rotation/state.json"""
+    """Load last fired hot tag from hashtags/datasource/1h_hot.json"""
     try:
-        response = s3_client.get_object(Bucket=bucket, Key="hashtags/rotation/state.json")
-        state = json.loads(response["Body"].read().decode("utf-8"))
-        last_fired_tag = state.get("last_fired_hot_tag", None)
+        response = s3_client.get_object(Bucket=bucket, Key="hashtags/datasource/1h_hot.json")
+        data = json.loads(response["Body"].read().decode("utf-8"))
+        last_fired_tag = data.get("last_fired_hot_tag", None)
         if last_fired_tag:
             print(f"[HOT-DRIVEN] Last fired hot tag: {last_fired_tag}")
         return last_fired_tag
@@ -371,21 +334,21 @@ def load_last_fired_hot_tag(bucket):
 
 
 def save_last_fired_hot_tag(bucket, hashtag):
-    """Save last fired hot tag to rotation/state.json"""
+    """Save last fired hot tag to hashtags/datasource/1h_hot.json"""
     try:
-        # Read current state
-        response = s3_client.get_object(Bucket=bucket, Key="hashtags/rotation/state.json")
-        state = json.loads(response["Body"].read().decode("utf-8"))
+        # Read current 1h_hot data
+        response = s3_client.get_object(Bucket=bucket, Key="hashtags/datasource/1h_hot.json")
+        data = json.loads(response["Body"].read().decode("utf-8"))
 
         # Update last_fired_hot_tag
-        state["last_fired_hot_tag"] = hashtag
-        state["last_fired_hot_tag_timestamp"] = datetime.now(JST).isoformat()
+        data["last_fired_hot_tag"] = hashtag
+        data["last_fired_hot_tag_timestamp"] = datetime.now(JST).isoformat()
 
-        # Save updated state
+        # Save updated data
         s3_client.put_object(
             Bucket=bucket,
-            Key="hashtags/rotation/state.json",
-            Body=json.dumps(state, ensure_ascii=False, indent=2),
+            Key="hashtags/datasource/1h_hot.json",
+            Body=json.dumps(data, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
         print(f"[HOT-DRIVEN] Saved last_fired_hot_tag: {hashtag}")
