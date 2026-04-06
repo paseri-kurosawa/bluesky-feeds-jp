@@ -595,6 +595,7 @@ def aggregate_1h_hashtags(bucket):
     """
     Aggregate hashtags from past 1 hour batch files.
     Reads from hashtags/batch/ and sums counts from files within the last 1 hour.
+    Filters out badwords to ensure only safe hashtags are returned.
     Sorts by count (descending).
 
     Returns: Dict of {tag: count} sorted by count, or {} on failure
@@ -635,6 +636,9 @@ def aggregate_1h_hashtags(bucket):
                 except Exception as e:
                     print(f"[1H HASHTAGS] Error processing {key}: {str(e)}")
                     continue
+
+        # Filter out badwords before sorting
+        aggregated = filter_hashtags_by_badwords(aggregated)
 
         # Sort by count (descending)
         sorted_hashtags = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)
