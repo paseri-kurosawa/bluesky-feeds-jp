@@ -962,6 +962,33 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
         )
         print(f"[S3] Saved top_hashtags_1h_from_raw_posts to {top_hashtags_1h_key}")
 
+        # === NEW: Save to hashtags/datasource/ for hot-driven architecture ===
+        # Save stable ranking to hashtags/datasource/stable_ranking.json
+        stable_ranking_key = "hashtags/datasource/stable_ranking.json"
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=stable_ranking_key,
+            Body=json.dumps({
+                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "top_hashtags": stable_hashtags
+            }, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved stable_ranking to {stable_ranking_key}")
+
+        # Save 1H hot hashtags to hashtags/datasource/1h_hot.json
+        hot_1h_key = "hashtags/datasource/1h_hot.json"
+        s3_client.put_object(
+            Bucket=STATISTICS_BUCKET,
+            Key=hot_1h_key,
+            Body=json.dumps({
+                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "top_hashtags_1h": top_hashtags_1h_array
+            }, ensure_ascii=False, indent=2),
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[S3] Saved 1h_hot to {hot_1h_key}")
+
         return s3_key_raw  # Return raw-dense key as primary
     except Exception as e:
         print(f"[S3] Error saving stats or updating dashboard: {str(e)}")
