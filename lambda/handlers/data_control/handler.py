@@ -441,12 +441,15 @@ def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
     Returns:
         List of items with visible_ts attached
     """
+    print(f"[VISIBLE_TS] START calculate_visible_ts_for_stablehashtag: items_count={len(items)}, batch_spread_seconds={batch_spread_seconds}, top_n={top_n}")
+
     now = get_jst_now()
     config = get_config()
     spread_exponent = config.get("scheduling", {}).get("stablehashtag_spread_exponent", 0.5)
 
     items_count = len(items)
     if items_count == 0:
+        print(f"[VISIBLE_TS] items_count is 0, returning empty list")
         return items
 
     for idx, item in enumerate(items):
@@ -477,6 +480,9 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
     Raises: Exception on critical failure
     """
     r.ping()
+
+    print(f"[STORE] START store_feeds: items_raw={len(items_raw)}, items_stablehashtag={len(items_stablehashtag)}, batch_spread_seconds={batch_spread_seconds}, top_n={top_n}")
+    print(f"[STORE] items_stablehashtag type={type(items_stablehashtag)}, is_none={items_stablehashtag is None}")
 
     now = int(time.time())
     raw_stored = 0
@@ -586,6 +592,7 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
     stablehashtag_zcard = r.zcard("feed:stablehashtag:jp:v1")
     print(f"[STORE] Stored - Raw: {raw_stored}, Dense: {dense_stored}, StableTag: {stablehashtag_stored}")
     print(f"[STORE] Final - Raw ZCARD: {raw_zcard}, Dense ZCARD: {dense_zcard}, StableTag ZCARD: {stablehashtag_zcard}")
+    print(f"[STORE] END store_feeds: returning ({raw_stored}, {dense_stored}, {stablehashtag_stored})")
 
     return raw_stored, dense_stored, stablehashtag_stored
 
@@ -1050,8 +1057,13 @@ def lambda_handler(event, context):
     # === CRITICAL: Store feeds to Valkey ===
     try:
         batch_spread_seconds = get_batch_spread_seconds()
+        print(f"[HANDLER] Calling store_feeds with top_n={top_n}")
         raw_stored, dense_stored, stablehashtag_stored = store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n)
+        print(f"[HANDLER] store_feeds returned: raw={raw_stored}, dense={dense_stored}, stablehashtag={stablehashtag_stored}")
     except Exception as e:
+        print(f"[ERROR] store_feeds EXCEPTION: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {
             "error": str(e),
             "stored_raw": 0,
