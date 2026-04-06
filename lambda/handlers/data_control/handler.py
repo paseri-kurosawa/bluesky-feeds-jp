@@ -443,7 +443,7 @@ def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
     """
     print(f"[VISIBLE_TS] START calculate_visible_ts_for_stablehashtag: items_count={len(items)}, batch_spread_seconds={batch_spread_seconds}, top_n={top_n}")
 
-    now = get_jst_now()
+    now = int(time.time())  # Unix timestamp (float seconds)
     config = get_config()
     spread_exponent = config.get("scheduling", {}).get("stablehashtag_spread_exponent", 0.5)
 
