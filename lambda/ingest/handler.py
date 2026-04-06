@@ -435,6 +435,28 @@ def select_hot_hashtag(hot_and_stable, hot_hashtags_1h, stable_hashtags_list):
     return selected
 
 
+def has_hashtags(item):
+    """Check if item has any hashtags"""
+    hashtags = item.get("hashtags", [])
+    return len(hashtags) > 0
+
+
+def extract_hashtag_posts(items):
+    """
+    Extract only posts with hashtags from a list of items.
+    Preserves order.
+
+    Args:
+        items: List of post items
+
+    Returns:
+        List of items that have hashtags
+    """
+    tagged_items = [item for item in items if has_hashtags(item)]
+    print(f"[LAYER2] Extracted {len(tagged_items)} posts with hashtags from {len(items)} total")
+    return tagged_items
+
+
 def get_current_hashtag(bucket):
     """
     Get current hashtag based on rotation state with hot detection.
@@ -757,20 +779,42 @@ def lambda_handler(event, context):
                         "spam_hashtags": 0,
                     }
             else:
-                # Layer 1 no hot detected - Layer 2 fallback will be added in next phase
-                print("[HOT-DRIVEN] No hot+stable hashtags detected. Layer 2 fallback (future implementation)")
-                badword_stats_stablehashtag = {
-                    "total_posts_with_badwords": 0,
-                    "total_badword_matches": 0,
-                    "badword_distribution": {},
-                    "matched_words": {},
-                }
-                skipped_by_reason_stablehashtag = {
-                    "invalid_fields": 0,
-                    "moderation_labels": 0,
-                    "non_japanese": 0,
-                    "spam_hashtags": 0,
-                }
+                # Layer 1 no hot detected - Layer 2 fallback from Dense feed
+                print("[HOT-DRIVEN] No hot+stable hashtags detected. Using Layer 2 (Dense fallback)")
+
+                # Extract hashtag-bearing posts from Dense feed (items_raw with density_score >= threshold)
+                dense_posts = [item for item in items_raw if item.get("density_score", 0) >= get_density_threshold()]
+                tagged_dense_posts = extract_hashtag_posts(dense_posts)
+
+                if tagged_dense_posts:
+                    # Use tagged Dense posts for stablehashtag feed
+                    items_stablehashtag = tagged_dense_posts
+                    stablehashtag_posts_count = len(items_raw)  # Original raw count for stats
+
+                    # Process with existing filters (already applied via process_posts_with_filters)
+                    # Calculate stats (reuse badword from raw since Dense posts are already filtered)
+                    badword_stats_stablehashtag = badword_stats  # Reuse raw stats
+                    skipped_by_reason_stablehashtag = skipped_by_reason  # Reuse raw stats
+                    dense_texts_stablehashtag = dense_texts  # Reuse dense texts
+                    dense_base_forms_stablehashtag = dense_base_forms  # Reuse base forms
+
+                    print(f"[LAYER2] Using {len(items_stablehashtag)} tagged Dense posts for stablehashtag feed")
+                else:
+                    # No tagged Dense posts available
+                    print("[LAYER2] No tagged posts in Dense feed")
+                    items_stablehashtag = []
+                    badword_stats_stablehashtag = {
+                        "total_posts_with_badwords": 0,
+                        "total_badword_matches": 0,
+                        "badword_distribution": {},
+                        "matched_words": {},
+                    }
+                    skipped_by_reason_stablehashtag = {
+                        "invalid_fields": 0,
+                        "moderation_labels": 0,
+                        "non_japanese": 0,
+                        "spam_hashtags": 0,
+                    }
         except Exception as e:
             print(f"[QUERY2] Error in hot-driven logic: {e}")
             import traceback

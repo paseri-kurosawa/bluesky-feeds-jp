@@ -427,6 +427,41 @@ def backfill_previous_day(bucket, getfeed_stats_raw_dense, getfeed_stats_stableh
         pass
 
 
+# === Helper: Calculate visible_ts for stablehashtag feed ===
+def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
+    """
+    Calculate and attach visible_ts to items for stablehashtag feed.
+    Uses exponential distribution with early concentration.
+
+    Args:
+        items: List of items (dicts with uri, ts, etc.)
+        batch_spread_seconds: Window for distributing visible_ts (e.g., 600s)
+        top_n: Number of concurrent hot hashtags (e.g., 2)
+
+    Returns:
+        List of items with visible_ts attached
+    """
+    now = get_jst_now()
+    config = get_config()
+    spread_exponent = config.get("scheduling", {}).get("stablehashtag_spread_exponent", 0.5)
+
+    items_count = len(items)
+    if items_count == 0:
+        return items
+
+    for idx, item in enumerate(items):
+        if items_count > 1:
+            reverse_idx = items_count - 1 - idx
+            offset = batch_spread_seconds * top_n * (1 - (1 - reverse_idx / (items_count - 1)) ** spread_exponent)
+        else:
+            offset = 0
+
+        visible_ts = now + offset
+        item["visible_ts"] = visible_ts
+
+    return items
+
+
 # === Responsibility 1: Store Feeds to Valkey ===
 def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
     """
@@ -504,11 +539,14 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
                 raise
 
     # === Store StableTag Feed ===
-    stablehashtag_count = len(items_stablehashtag)
+    # Calculate visible_ts using exponential distribution
+    items_stablehashtag = calculate_visible_ts_for_stablehashtag(items_stablehashtag, batch_spread_seconds, top_n)
+
     for idx, item in enumerate(items_stablehashtag):
         uri = item.get("uri")
         ts = item.get("ts")
         density_score = item.get("density_score", 0)
+        visible_ts = item.get("visible_ts")
 
         if not uri or ts is None:
             continue
@@ -518,18 +556,6 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
             ts = now
         if ts < 0:
             continue
-
-        # Calculate visible_ts: distribute posts with early concentration, sparse later
-        # Using exponential distribution: (1 - (1 - reverse_idx/(count-1))^exponent)
-        # Reverse order: older posts appear first, newer posts later
-        config = get_config()
-        spread_exponent = config.get("scheduling", {}).get("stablehashtag_spread_exponent", 0.5)
-        if stablehashtag_count > 1:
-            reverse_idx = stablehashtag_count - 1 - idx
-            offset = batch_spread_seconds * top_n * (1 - (1 - reverse_idx / (stablehashtag_count - 1)) ** spread_exponent)
-        else:
-            offset = 0
-        visible_ts = now + offset
 
         # Create member as JSON with metadata
         member = json.dumps({
