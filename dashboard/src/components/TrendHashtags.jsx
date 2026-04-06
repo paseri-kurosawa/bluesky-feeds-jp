@@ -5,7 +5,9 @@ export function TrendHashtags({ data }) {
   const [trends, setTrends] = useState({
     timestamp: null,
     stable_hashtags: [],
-    top_hashtags_1h: []
+    top_hashtags_1h: [],
+    last_fired_hot_tag: null,
+    last_fired_hot_tag_timestamp: null
   })
   const [loading, setLoading] = useState(true)
   const bucketUrl = 'https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com'
@@ -28,15 +30,21 @@ export function TrendHashtags({ data }) {
         const trendUrl = `${bucketUrl}/components/top_hashtags_1h_from_raw_posts.json`
         const trendResponse = await fetch(trendUrl)
         let trendData = []
+        let lastFiredHotTag = null
+        let lastFiredHotTagTimestamp = null
         if (trendResponse.ok) {
           const json = await trendResponse.json()
           trendData = json.top_hashtags_1h || []
+          lastFiredHotTag = json.last_fired_hot_tag
+          lastFiredHotTagTimestamp = json.last_fired_hot_tag_timestamp
         }
 
         setTrends({
           timestamp: timestamp || new Date().toISOString(),
           stable_hashtags: stableData,
-          top_hashtags_1h: trendData
+          top_hashtags_1h: trendData,
+          last_fired_hot_tag: lastFiredHotTag,
+          last_fired_hot_tag_timestamp: lastFiredHotTagTimestamp
         })
       } catch (err) {
         console.error('Error fetching trend data:', err)
@@ -55,6 +63,18 @@ export function TrendHashtags({ data }) {
         <p>Loading...</p>
       </div>
     )
+  }
+
+  const formatTimestamp = (isoTimestamp) => {
+    if (!isoTimestamp) return ''
+    const date = new Date(isoTimestamp)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
   }
 
   const renderTable = (hashtags) => {
@@ -85,16 +105,24 @@ export function TrendHashtags({ data }) {
   return (
     <div className="trend-hashtags">
       <div className="trend-header">
-        <h2>Trend Hashtags (Top 10)</h2>
+        <h2>Trend Hashtags</h2>
         <span className="timestamp">Updated: {trends.timestamp}</span>
       </div>
       <div className="trend-container">
         <div className="trend-section-1h">
-          <h3>Trend Hashtags 1H</h3>
+          <h3>Hot Hashtags 1H</h3>
+          {trends.last_fired_hot_tag && (
+            <div className="current-hot-tag-box">
+              Currently hot: <strong>#{trends.last_fired_hot_tag}</strong>
+              {trends.last_fired_hot_tag_timestamp && (
+                <span className="hot-tag-time"> ({formatTimestamp(trends.last_fired_hot_tag_timestamp)})</span>
+              )}
+            </div>
+          )}
           {trends.top_hashtags_1h && trends.top_hashtags_1h.length > 0 ? (
             renderTable(trends.top_hashtags_1h)
           ) : (
-            <p className="no-data">No trend data available</p>
+            <p className="no-data">No hot hashtags available</p>
           )}
         </div>
         <div className="trend-section-all">

@@ -951,12 +951,26 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
             top_hashtags_1h_array = [{"tag": tag, "count": count} for tag, count in top_hashtags_1h_raw.items()]
         else:
             top_hashtags_1h_array = top_hashtags_1h_raw if isinstance(top_hashtags_1h_raw, list) else []
+
+        # Load last_fired_hot_tag from 1h_hot.json
+        last_fired_hot_tag = None
+        last_fired_hot_tag_timestamp = None
+        try:
+            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key="hashtags/datasource/1h_hot.json")
+            existing_hot_data = json.loads(response["Body"].read().decode("utf-8"))
+            last_fired_hot_tag = existing_hot_data.get("last_fired_hot_tag", None)
+            last_fired_hot_tag_timestamp = existing_hot_data.get("last_fired_hot_tag_timestamp", None)
+        except:
+            pass  # File may not exist yet
+
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
             Key=top_hashtags_1h_key,
             Body=json.dumps({
                 "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "top_hashtags_1h": top_hashtags_1h_array
+                "top_hashtags_1h": top_hashtags_1h_array,
+                "last_fired_hot_tag": last_fired_hot_tag,
+                "last_fired_hot_tag_timestamp": last_fired_hot_tag_timestamp
             }, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
