@@ -30,6 +30,89 @@
   color: #666;
 }
 
+.selected-hot-hashtag-section {
+  background-color: #f0f4ff;
+  border: 2px solid #667eea;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.selected-hot-hashtag-content h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  color: #333;
+  font-weight: 600;
+}
+
+.selected-hot-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.hashtag-display {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hashtag-name {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #1da1f2;
+  font-family: 'Courier New', monospace;
+  background-color: #fff;
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid #1da1f2;
+}
+
+.selection-method {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.method-label {
+  color: #666;
+  font-weight: 500;
+}
+
+.method-value {
+  color: #333;
+  background-color: #fff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid #ddd;
+}
+
+.no-selection {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.no-selection-text {
+  color: #999;
+  font-style: italic;
+}
+
+.selection-method-fallback {
+  color: #666;
+  background-color: #f5f5f5;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid #ddd;
+  font-size: 0.85rem;
+}
+
 .trend-container {
   display: flex;
   gap: 2rem;
@@ -37,33 +120,18 @@
   margin-top: 0;
 }
 
-.trend-section-1h,
-.trend-section-all {
+.trend-section-batch,
+.trend-section-stable {
   flex: 1;
 }
 
-.trend-section-1h h3,
-.trend-section-all h3 {
+.trend-section-batch h3,
+.trend-section-stable h3 {
   margin-top: 0;
   margin-bottom: 1rem;
   font-size: 0.95rem;
   color: #555;
   font-weight: 600;
-}
-
-.current-hot-tag-box {
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-  background-color: #fff9e6;
-  border-left: 4px solid #ff6b00;
-  font-size: 0.9rem;
-  color: #333;
-}
-
-.hot-tag-time {
-  font-size: 0.85rem;
-  color: #666;
-  margin-left: 0.5rem;
 }
 
 .no-data {
@@ -155,8 +223,8 @@
     gap: 1.5rem;
   }
 
-  .trend-section-1h,
-  .trend-section-all {
+  .trend-section-batch,
+  .trend-section-stable {
     flex: 1;
   }
 }

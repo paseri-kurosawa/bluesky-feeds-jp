@@ -5,9 +5,9 @@ export function TrendHashtags({ data }) {
   const [trends, setTrends] = useState({
     timestamp: null,
     stable_hashtags: [],
-    top_hashtags_1h: [],
-    last_fired_hot_tag: null,
-    last_fired_hot_tag_timestamp: null
+    latest_batch: [],
+    selected_hot_tag: null,
+    selection_method: null
   })
   const [loading, setLoading] = useState(true)
   const bucketUrl = 'https://bluesky-feed-dashboard-878311109818.s3.ap-northeast-1.amazonaws.com'
@@ -26,25 +26,38 @@ export function TrendHashtags({ data }) {
           timestamp = json.generated_at
         }
 
-        // Fetch top hashtags 1H (from raw posts)
-        const trendUrl = `${bucketUrl}/components/top_hashtags_1h_from_raw_posts.json`
-        const trendResponse = await fetch(trendUrl)
-        let trendData = []
-        let lastFiredHotTag = null
-        let lastFiredHotTagTimestamp = null
-        if (trendResponse.ok) {
-          const json = await trendResponse.json()
-          trendData = json.top_hashtags_1h || []
-          lastFiredHotTag = json.last_fired_hot_tag
-          lastFiredHotTagTimestamp = json.last_fired_hot_tag_timestamp
+        // Fetch latest batch
+        const latestBatchUrl = `${bucketUrl}/components/latest_batch.json`
+        const latestBatchResponse = await fetch(latestBatchUrl)
+        let latestBatchData = []
+        if (latestBatchResponse.ok) {
+          const batchJson = await latestBatchResponse.json()
+          // Handle new format: {hashtags: {...}, selected_hot_tag, selection_method}
+          const hashtags = batchJson.hashtags || batchJson
+          // Convert {tag: count} to [{tag: ..., count: ...}]
+          latestBatchData = Object.entries(hashtags).map(([tag, count]) => ({
+            tag,
+            count
+          }))
+        }
+
+        // Fetch selected hot hashtag
+        const selectedHotUrl = `${bucketUrl}/components/selected_hot_hashtag.json`
+        const selectedHotResponse = await fetch(selectedHotUrl)
+        let selectedHotTag = null
+        let selectionMethod = null
+        if (selectedHotResponse.ok) {
+          const hotJson = await selectedHotResponse.json()
+          selectedHotTag = hotJson.selected_hot_tag
+          selectionMethod = hotJson.selection_method
         }
 
         setTrends({
           timestamp: timestamp || new Date().toISOString(),
           stable_hashtags: stableData,
-          top_hashtags_1h: trendData,
-          last_fired_hot_tag: lastFiredHotTag,
-          last_fired_hot_tag_timestamp: lastFiredHotTagTimestamp
+          latest_batch: latestBatchData,
+          selected_hot_tag: selectedHotTag,
+          selection_method: selectionMethod
         })
       } catch (err) {
         console.error('Error fetching trend data:', err)
@@ -63,18 +76,6 @@ export function TrendHashtags({ data }) {
         <p>Loading...</p>
       </div>
     )
-  }
-
-  const formatTimestamp = (isoTimestamp) => {
-    if (!isoTimestamp) return ''
-    const date = new Date(isoTimestamp)
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    const hours = String(date.getHours()).padStart(2, '0')
-    const minutes = String(date.getMinutes()).padStart(2, '0')
-    const seconds = String(date.getSeconds()).padStart(2, '0')
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
   }
 
   const renderTable = (hashtags) => {
@@ -108,24 +109,44 @@ export function TrendHashtags({ data }) {
         <h2>Trend Hashtags</h2>
         <span className="timestamp">Updated: {trends.timestamp}</span>
       </div>
-      <div className="trend-container">
-        <div className="trend-section-1h">
-          <h3>Hot Hashtags 1H</h3>
-          {trends.last_fired_hot_tag && (
-            <div className="current-hot-tag-box">
-              Currently hot: <strong>#{trends.last_fired_hot_tag}</strong>
-              {trends.last_fired_hot_tag_timestamp && (
-                <span className="hot-tag-time"> ({formatTimestamp(trends.last_fired_hot_tag_timestamp)})</span>
-              )}
+
+      {/* Selected Hot Hashtag Display */}
+      <div className="selected-hot-hashtag-section">
+        <div className="selected-hot-hashtag-content">
+          <h3>Currently Selected Hot Hashtag</h3>
+          {trends.selected_hot_tag ? (
+            <div className="selected-hot-info">
+              <div className="hashtag-display">
+                <span className="hashtag-name">#{trends.selected_hot_tag}</span>
+              </div>
+              <div className="selection-method">
+                <span className="method-label">Selection Method:</span>
+                <span className="method-value">{trends.selection_method}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="selected-hot-info">
+              <div className="no-selection">
+                <span className="no-selection-text">No hot hashtag selected</span>
+                {trends.selection_method && (
+                  <span className="selection-method-fallback">({trends.selection_method})</span>
+                )}
+              </div>
             </div>
           )}
-          {trends.top_hashtags_1h && trends.top_hashtags_1h.length > 0 ? (
-            renderTable(trends.top_hashtags_1h)
+        </div>
+      </div>
+
+      <div className="trend-container">
+        <div className="trend-section-batch">
+          <h3>Latest Batch</h3>
+          {trends.latest_batch && trends.latest_batch.length > 0 ? (
+            renderTable(trends.latest_batch)
           ) : (
-            <p className="no-data">No hot hashtags available</p>
+            <p className="no-data">No batch data available</p>
           )}
         </div>
-        <div className="trend-section-all">
+        <div className="trend-section-stable">
           <h3>Stable Hashtags</h3>
           {trends.stable_hashtags && trends.stable_hashtags.length > 0 ? (
             renderTable(trends.stable_hashtags)

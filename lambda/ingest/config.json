@@ -51,9 +51,9 @@
       "description": "ポスト属性に基づく調整（正規化前の avg_norm に対して適用）",
       "reply": {
         "enabled": true,
-        "adjustment": 0.5,
+        "adjustment": 0.25,
         "operation": "multiply",
-        "description": "返信は素点を0.5倍に減点"
+        "description": "返信は素点を0.25倍に減点"
       },
       "images": {
         "enabled": true,
