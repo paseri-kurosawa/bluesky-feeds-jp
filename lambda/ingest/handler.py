@@ -5,7 +5,7 @@ import boto3
 import unicodedata
 from botocore.exceptions import ClientError
 from datetime import datetime, timezone, timedelta
-from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms
+from density_scorer import calculate_density_score, tokenize_japanese, extract_base_forms, load_badwords_config
 
 # Japan Standard Time (UTC+9)
 JST = timezone(timedelta(hours=9))
@@ -304,98 +304,76 @@ def load_stable_ranking(bucket):
         return []
 
 
-def load_1h_hot(bucket):
-    """Load 1H hot hashtags from hashtags/datasource/1h_hot.json"""
+def load_latest_batch(bucket):
+    """Load latest batch hashtags from hashtags/batch/ directory"""
     try:
-        response = s3_client.get_object(Bucket=bucket, Key="hashtags/datasource/1h_hot.json")
-        data = json.loads(response["Body"].read().decode("utf-8"))
-        hashtags_1h = data.get("top_hashtags_1h", [])
-        # Convert list of dicts to dict {tag: count}
-        tags_1h_dict = {tag_dict["tag"].lower(): tag_dict["count"] for tag_dict in hashtags_1h}
-        print(f"[DATASOURCE] Loaded {len(tags_1h_dict)} unique 1H hot hashtags from datasource/1h_hot.json")
-        return tags_1h_dict
+        # List all batch files and find the latest one
+        response = s3_client.list_objects_v2(Bucket=bucket, Prefix="hashtags/batch/")
+        if "Contents" not in response:
+            print("[DATASOURCE] No batch files found in hashtags/batch/")
+            return {}
+
+        # Sort by LastModified, get the latest
+        files = sorted(response["Contents"], key=lambda x: x["LastModified"], reverse=True)
+        if not files:
+            print("[DATASOURCE] No batch files found")
+            return {}
+
+        latest_key = files[0]["Key"]
+        print(f"[DATASOURCE] Loading latest batch: {latest_key}")
+
+        # Get the latest batch file
+        batch_response = s3_client.get_object(Bucket=bucket, Key=latest_key)
+        batch_data = json.loads(batch_response["Body"].read().decode("utf-8"))
+
+        # batch_data is {tag: count, ...}
+        # Convert tags to lowercase for consistency
+        batch_dict = {tag.lower(): count for tag, count in batch_data.items()}
+        print(f"[DATASOURCE] Loaded {len(batch_dict)} unique hashtags from latest batch: {latest_key}")
+        return batch_dict
     except Exception as e:
-        print(f"[DATASOURCE] Error loading 1h_hot.json: {e}")
+        print(f"[DATASOURCE] Error loading latest batch: {e}")
         return {}
 
 
-def load_last_fired_hot_tag(bucket):
-    """Load last fired hot tag from hashtags/datasource/1h_hot.json"""
-    try:
-        response = s3_client.get_object(Bucket=bucket, Key="hashtags/datasource/1h_hot.json")
-        data = json.loads(response["Body"].read().decode("utf-8"))
-        last_fired_tag = data.get("last_fired_hot_tag", None)
-        if last_fired_tag:
-            print(f"[HOT-DRIVEN] Last fired hot tag: {last_fired_tag}")
-        return last_fired_tag
-    except Exception as e:
-        print(f"[HOT-DRIVEN] Error loading last_fired_hot_tag: {e}")
-        return None
 
-
-def save_last_fired_hot_tag(bucket, hashtag):
-    """Save last fired hot tag to hashtags/datasource/1h_hot.json"""
-    try:
-        # Read current 1h_hot data
-        response = s3_client.get_object(Bucket=bucket, Key="hashtags/datasource/1h_hot.json")
-        data = json.loads(response["Body"].read().decode("utf-8"))
-
-        # Update last_fired_hot_tag
-        data["last_fired_hot_tag"] = hashtag
-        data["last_fired_hot_tag_timestamp"] = datetime.now(JST).isoformat()
-
-        # Save updated data
-        s3_client.put_object(
-            Bucket=bucket,
-            Key="hashtags/datasource/1h_hot.json",
-            Body=json.dumps(data, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[HOT-DRIVEN] Saved last_fired_hot_tag: {hashtag}")
-    except Exception as e:
-        print(f"[HOT-DRIVEN] Error saving last_fired_hot_tag: {e}")
-
-
-def get_hot_and_stable_hashtags(bucket, exclude_tag=None):
+def get_and_select_hot_hashtag(bucket):
     """
-    Get intersection of 1H hot hashtags and stable hashtags.
+    Get intersection of latest batch and stable hashtags, then select one.
 
     Args:
         bucket: S3 bucket name
-        exclude_tag: Tag to exclude (previous firing tag for cooldown)
 
     Returns:
-        List of hashtags in intersection, or empty list if no hot detected
+        Selected hashtag name (lowercase), or None if no hot detected
     """
     # Load both datasources
     stable_hashtags = load_stable_ranking(bucket)
-    hot_hashtags_1h = load_1h_hot(bucket)
+    latest_batch = load_latest_batch(bucket)
 
-    if not stable_hashtags or not hot_hashtags_1h:
-        print("[HOT-DRIVEN] No stable or hot hashtags available")
-        return []
+    if not stable_hashtags or not latest_batch:
+        print("[HOT-DRIVEN] No stable or batch hashtags available")
+        return None
 
     # Convert stable list to set of lowercase tag names
     stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
-    hot_tags_set = set(hot_hashtags_1h.keys())
+    batch_tags_set = set(latest_batch.keys())
 
     # Get intersection
-    intersection = stable_tags_set & hot_tags_set
+    intersection = stable_tags_set & batch_tags_set
 
     if not intersection:
-        print("[HOT-DRIVEN] No intersection between hot and stable hashtags")
-        return []
+        print("[HOT-DRIVEN] No intersection between batch and stable hashtags")
+        return None
 
-    # Exclude last fired tag (cooldown)
-    if exclude_tag and exclude_tag.lower() in intersection:
-        intersection.discard(exclude_tag.lower())
-        print(f"[HOT-DRIVEN] Excluded last_fired_hot_tag from intersection: {exclude_tag}")
+    print(f"[HOT-DRIVEN] Found {len(intersection)} batch+stable hashtags: {intersection}")
 
-    print(f"[HOT-DRIVEN] Found {len(intersection)} hot+stable hashtags: {intersection}")
-    return list(intersection)
+    # Select 1 hashtag from intersection
+    selected_hot_tag = select_hot_hashtag(list(intersection), latest_batch, stable_hashtags)
+    return selected_hot_tag
 
 
-def select_hot_hashtag(hot_and_stable, hot_hashtags_1h, stable_hashtags_list):
+def select_hot_hashtag(hot_and_stable, latest_batch, stable_hashtags_list):
     """
     Select 1 hashtag from multiple hot+stable candidates.
 
@@ -404,7 +382,7 @@ def select_hot_hashtag(hot_and_stable, hot_hashtags_1h, stable_hashtags_list):
 
     Args:
         hot_and_stable: List of tag names (lowercase)
-        hot_hashtags_1h: Dict {tag: count}
+        latest_batch: Dict {tag: count}
         stable_hashtags_list: List of dicts [{tag: ..., count: ...}]
 
     Returns:
@@ -426,12 +404,12 @@ def select_hot_hashtag(hot_and_stable, hot_hashtags_1h, stable_hashtags_list):
     selected = sorted(
         hot_and_stable,
         key=lambda tag: (
-            -hot_hashtags_1h.get(tag, 0),  # Appearance count (descending)
+            -latest_batch.get(tag, 0),  # Appearance count (descending)
             stable_position_map.get(tag, float('inf'))  # Position in stable list (ascending)
         )
     )[0]
 
-    print(f"[HOT-DRIVEN] Selected: {selected} (count={hot_hashtags_1h.get(selected, 0)}, stable_pos={stable_position_map.get(selected, 'N/A')})")
+    print(f"[HOT-DRIVEN] Selected: {selected} (count={latest_batch.get(selected, 0)}, stable_pos={stable_position_map.get(selected, 'N/A')})")
     return selected
 
 
@@ -626,6 +604,70 @@ def lambda_handler(event, context):
         # Count text-only short posts
         text_only_short_count = sum(1 for item in items_raw if item["density_score"] == 0.0)
 
+        # === Extract and count hashtags from THIS BATCH (Raw feed) ===
+        # Normalize tags (Unicode NFC + lowercase) to absorb variation
+        hashtag_counts = {}
+        for item in items_raw:
+            hashtags = item.get("hashtags", [])
+            for tag in hashtags:
+                normalized_tag = unicodedata.normalize("NFC", tag).lower()
+                hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
+
+        # Filter hashtags by badwords (remove inappropriate tags)
+        # Partial matching: exclude hashtag if it contains any badword
+        try:
+            badwords_config = load_badwords_config()
+            badwords_set = {word.lower() for word in badwords_config.get("badwords", [])}
+
+            filtered_hashtag_counts = {}
+            filtered_out_count = 0
+
+            for tag, count in hashtag_counts.items():
+                tag_lower = tag.lower()
+                # Check if any badword is contained in the hashtag
+                has_badword = any(badword in tag_lower for badword in badwords_set)
+                if not has_badword:
+                    filtered_hashtag_counts[tag] = count
+                else:
+                    filtered_out_count += 1
+
+            hashtag_counts = filtered_hashtag_counts
+
+        except Exception as e:
+            print(f"[HASHTAG FILTER ERROR] Failed to filter hashtags: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+        # === Select hot hashtag from THIS BATCH's hashtags ===
+        selected_hot_tag = None
+        selection_method = None
+        try:
+            if hashtag_counts:
+                # Load stable ranking for intersection check
+                stable_hashtags = extract_stable_hashtags(statistics_bucket, days=30, top_n=100)
+                stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
+                batch_tags_set = set(hashtag_counts.keys())
+
+                # Get intersection
+                intersection = stable_tags_set & batch_tags_set
+
+                if intersection:
+                    print(f"[HOT-DRIVEN] Found {len(intersection)} batch+stable hashtags: {intersection}")
+                    # Select 1 hashtag from intersection
+                    selected_hot_tag = select_hot_hashtag(list(intersection), hashtag_counts, stable_hashtags)
+                    selection_method = "batch_stable_intersection"
+                else:
+                    print("[HOT-DRIVEN] No intersection between batch and stable hashtags")
+                    selection_method = "dense_fallback"
+            else:
+                print("[HOT-DRIVEN] No hashtags in this batch")
+                selection_method = "dense_fallback"
+        except Exception as e:
+            print(f"[HOT-DRIVEN] Error selecting hot hashtag: {e}")
+            import traceback
+            traceback.print_exc()
+            selection_method = "dense_fallback"
+
         # === QUERY 2: lang:ja #<hot_hashtag> (STABLETAG - HOT DRIVEN) ===
         items_stablehashtag = []
         stablehashtag_posts_count = 0
@@ -636,48 +678,16 @@ def lambda_handler(event, context):
         skipped_by_reason_stablehashtag = None
 
         try:
-            # Load last fired hot tag for cooldown
-            exclude_tag = load_last_fired_hot_tag(statistics_bucket)
+            if selected_hot_tag:
+                search_query_2 = f"lang:ja #{selected_hot_tag}"
+                print(f"[HOT-DRIVEN] Querying with selected hot hashtag: {search_query_2}")
 
-            # Get hot+stable intersection
-            hot_and_stable = get_hot_and_stable_hashtags(statistics_bucket, exclude_tag=exclude_tag)
+                res_2 = search_posts_with_retry(client, search_query_2, search_config, max_retries=3)
+                posts_2 = getattr(res_2, "posts", []) or []
+                print(f"[QUERY2] Found {len(posts_2)} posts for: {search_query_2}")
 
-            if hot_and_stable:
-                # Layer 1: Hot+Stable detected
-                # Load datasources for selection
-                stable_hashtags = load_stable_ranking(statistics_bucket)
-                hot_hashtags_1h = load_1h_hot(statistics_bucket)
-
-                # Select 1 hashtag from intersection
-                selected_hot_tag = select_hot_hashtag(hot_and_stable, hot_hashtags_1h, stable_hashtags)
-
-                if selected_hot_tag:
-                    search_query_2 = f"lang:ja #{selected_hot_tag}"
-                    print(f"[HOT-DRIVEN] Querying with selected hot hashtag: {search_query_2}")
-
-                    res_2 = search_posts_with_retry(client, search_query_2, search_config, max_retries=3)
-                    posts_2 = getattr(res_2, "posts", []) or []
-                    print(f"[QUERY2] Found {len(posts_2)} posts for: {search_query_2}")
-
-                    items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
-                    stablehashtag_posts_count = len(posts_2)
-
-                    # Save last fired hot tag
-                    save_last_fired_hot_tag(statistics_bucket, selected_hot_tag)
-                else:
-                    print("[HOT-DRIVEN] Failed to select hot hashtag")
-                    badword_stats_stablehashtag = {
-                        "total_posts_with_badwords": 0,
-                        "total_badword_matches": 0,
-                        "badword_distribution": {},
-                        "matched_words": {},
-                    }
-                    skipped_by_reason_stablehashtag = {
-                        "invalid_fields": 0,
-                        "moderation_labels": 0,
-                        "non_japanese": 0,
-                        "spam_hashtags": 0,
-                    }
+                items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
+                stablehashtag_posts_count = len(posts_2)
             else:
                 # Layer 1 no hot detected - Layer 2 fallback from Dense feed
                 print("[HOT-DRIVEN] No hot+stable hashtags detected. Using Layer 2 (Dense fallback)")
@@ -691,14 +701,23 @@ def lambda_handler(event, context):
                     items_stablehashtag = tagged_dense_posts
                     stablehashtag_posts_count = len(items_raw)  # Original raw count for stats
 
-                    # Process with existing filters (already applied via process_posts_with_filters)
-                    # Calculate stats (reuse badword from raw since Dense posts are already filtered)
-                    badword_stats_stablehashtag = badword_stats  # Reuse raw stats
-                    skipped_by_reason_stablehashtag = skipped_by_reason  # Reuse raw stats
-                    dense_texts_stablehashtag = dense_texts  # Reuse dense texts
-                    dense_base_forms_stablehashtag = dense_base_forms  # Reuse base forms
+                    # Layer 2 fallback: No statistics (fallback mode)
+                    badword_stats_stablehashtag = {
+                        "total_posts_with_badwords": 0,
+                        "total_badword_matches": 0,
+                        "badword_distribution": {},
+                        "matched_words": {},
+                    }
+                    skipped_by_reason_stablehashtag = {
+                        "invalid_fields": 0,
+                        "moderation_labels": 0,
+                        "non_japanese": 0,
+                        "spam_hashtags": 0,
+                    }
+                    dense_texts_stablehashtag = []  # No dense texts for fallback
+                    dense_base_forms_stablehashtag = []  # No base forms for fallback
 
-                    print(f"[LAYER2] Using {len(items_stablehashtag)} tagged Dense posts for stablehashtag feed")
+                    print(f"[LAYER2] Using {len(items_stablehashtag)} tagged Dense posts for stablehashtag feed (statistics disabled for fallback)")
                 else:
                     # No tagged Dense posts available
                     print("[LAYER2] No tagged posts in Dense feed")
@@ -912,40 +931,6 @@ def lambda_handler(event, context):
             "version": "1.0"
         }
 
-        # Extract and count hashtags from Raw feed only
-        # Normalize tags (Unicode NFC + lowercase) to absorb variation
-        hashtag_counts = {}
-        for item in items_raw:
-            hashtags = item.get("hashtags", [])
-            for tag in hashtags:
-                normalized_tag = unicodedata.normalize("NFC", tag).lower()
-                hashtag_counts[normalized_tag] = hashtag_counts.get(normalized_tag, 0) + 1
-
-        # Filter hashtags by badwords (remove inappropriate tags)
-        # Partial matching: exclude hashtag if it contains any badword
-        try:
-            badwords_config = load_badwords_config()
-            badwords_set = {word.lower() for word in badwords_config.get("badwords", [])}
-
-            filtered_hashtag_counts = {}
-            filtered_out_count = 0
-
-            for tag, count in hashtag_counts.items():
-                tag_lower = tag.lower()
-                # Check if any badword is contained in the hashtag
-                has_badword = any(badword in tag_lower for badword in badwords_set)
-                if not has_badword:
-                    filtered_hashtag_counts[tag] = count
-                else:
-                    filtered_out_count += 1
-
-            hashtag_counts = filtered_hashtag_counts
-
-        except Exception as e:
-            print(f"[HASHTAG FILTER ERROR] Failed to filter hashtags: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
         # Invoke Store Lambda asynchronously
         if items_raw or items_stablehashtag:
             lambda_client = boto3.client("lambda")
@@ -957,11 +942,11 @@ def lambda_handler(event, context):
                 "batch_stats_raw": stats_payload_raw,
                 "batch_stats_stablehashtag": stats_payload_stablehashtag,
                 "dense_texts": dense_texts,
-                "dense_texts_stablehashtag": dense_texts_stablehashtag,
                 "dense_base_forms": dense_base_forms,
-                "dense_base_forms_stablehashtag": dense_base_forms_stablehashtag,
                 "hashtags": hashtag_counts,
-                "top_n": top_n
+                "top_n": top_n,
+                "selected_hot_tag": selected_hot_tag,
+                "selection_method": selection_method
             }
 
             try:

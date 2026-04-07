@@ -628,8 +628,9 @@ def aggregate_1h_hashtags(bucket):
                         response = s3_client.get_object(Bucket=bucket, Key=key)
                         batch_data = json.loads(response["Body"].read().decode("utf-8"))
 
-                        # Aggregate hashtags
-                        for tag, count in batch_data.items():
+                        # Extract hashtags from batch file structure: {"hashtags": {...}, "selected_hot_tag": ..., "selection_method": ...}
+                        hashtags = batch_data.get("hashtags", {})
+                        for tag, count in hashtags.items():
                             aggregated[tag] = aggregated.get(tag, 0) + count
 
                         batch_count += 1
@@ -704,26 +705,45 @@ def extract_stable_hashtags(bucket, days=30, top_n=100):
         return []
 
 
-def save_hashtag_batch(bucket, hashtags):
+def save_hashtag_batch(bucket, hashtags, selected_hot_tag=None, selection_method=None):
     """
     Save hashtag batch file to S3.
 
     Args:
         bucket: S3 bucket name
         hashtags: Dict of {tag: count}
+        selected_hot_tag: Selected hashtag name (or None)
+        selection_method: "batch_stable_intersection" or "dense_fallback"
     """
     try:
         now = get_jst_now()
         timestamp = now.strftime("%Y-%m-%d_%H:%M")
         s3_key = f"hashtags/batch/{timestamp}.json"
 
+        # Build batch data with hashtags and selection info
+        batch_data = {
+            "hashtags": hashtags,
+            "selected_hot_tag": selected_hot_tag,
+            "selection_method": selection_method
+        }
+        body = json.dumps(batch_data, ensure_ascii=False, indent=2)
+
         s3_client.put_object(
             Bucket=bucket,
             Key=s3_key,
-            Body=json.dumps(hashtags, ensure_ascii=False, indent=2),
+            Body=body,
             ContentType="application/json; charset=utf-8"
         )
         print(f"[HASHTAG] Saved batch to {s3_key}")
+
+        # Also save to components/latest_batch.json for dashboard access
+        s3_client.put_object(
+            Bucket=bucket,
+            Key="components/latest_batch.json",
+            Body=body,
+            ContentType="application/json; charset=utf-8"
+        )
+        print(f"[HASHTAG] Saved latest_batch to components/latest_batch.json")
     except Exception as e:
         print(f"[HASHTAG ERROR] Failed to save hashtag batch: {str(e)}")
 
@@ -767,8 +787,9 @@ def backfill_hashtag_daily(bucket):
                     response = s3_client.get_object(Bucket=bucket, Key=key)
                     batch_data = json.loads(response["Body"].read().decode("utf-8"))
 
-                    # Aggregate hashtags
-                    for tag, count in batch_data.items():
+                    # Extract hashtags from batch file structure: {"hashtags": {...}, "selected_hot_tag": ..., "selection_method": ...}
+                    hashtags = batch_data.get("hashtags", {})
+                    for tag, count in hashtags.items():
                         aggregated[tag] = aggregated.get(tag, 0) + count
 
                     batch_count += 1
@@ -864,10 +885,16 @@ def aggregate_all_hashtags(bucket):
 
 
 # === Responsibility 3: Save Statistics to S3 ===
-def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
+def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_tag=None, selection_method=None):
     """
     Save batch statistics to S3 (separated by QUERY type) and update dashboard.
     Replaces top_hashtags with stable_hashtags (from 30-day analysis).
+
+    Args:
+        batch_stats_raw: Statistics for raw-dense feed
+        batch_stats_stablehashtag: Statistics for stablehashtag feed
+        selected_hot_tag: Currently selected hot hashtag (for dashboard display)
+        selection_method: Method used to select the hot hashtag (batch_stable_intersection or dense_fallback)
 
     Raises: Exception on failure
     """
@@ -952,25 +979,12 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
         else:
             top_hashtags_1h_array = top_hashtags_1h_raw if isinstance(top_hashtags_1h_raw, list) else []
 
-        # Load last_fired_hot_tag from 1h_hot.json
-        last_fired_hot_tag = None
-        last_fired_hot_tag_timestamp = None
-        try:
-            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key="hashtags/datasource/1h_hot.json")
-            existing_hot_data = json.loads(response["Body"].read().decode("utf-8"))
-            last_fired_hot_tag = existing_hot_data.get("last_fired_hot_tag", None)
-            last_fired_hot_tag_timestamp = existing_hot_data.get("last_fired_hot_tag_timestamp", None)
-        except:
-            pass  # File may not exist yet
-
         s3_client.put_object(
             Bucket=STATISTICS_BUCKET,
             Key=top_hashtags_1h_key,
             Body=json.dumps({
                 "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "top_hashtags_1h": top_hashtags_1h_array,
-                "last_fired_hot_tag": last_fired_hot_tag,
-                "last_fired_hot_tag_timestamp": last_fired_hot_tag_timestamp
+                "top_hashtags_1h": top_hashtags_1h_array
             }, ensure_ascii=False, indent=2),
             ContentType="application/json; charset=utf-8"
         )
@@ -990,33 +1004,21 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag):
         )
         print(f"[S3] Saved stable_ranking to {stable_ranking_key}")
 
-        # Save 1H hot hashtags to hashtags/datasource/1h_hot.json
-        # Also include last_fired_hot_tag info for single source of truth
-        hot_1h_key = "hashtags/datasource/1h_hot.json"
-
-        # Try to load existing state to preserve last_fired_hot_tag
-        last_fired_hot_tag = None
-        last_fired_hot_tag_timestamp = None
-        try:
-            response = s3_client.get_object(Bucket=STATISTICS_BUCKET, Key=hot_1h_key)
-            existing_data = json.loads(response["Body"].read().decode("utf-8"))
-            last_fired_hot_tag = existing_data.get("last_fired_hot_tag", None)
-            last_fired_hot_tag_timestamp = existing_data.get("last_fired_hot_tag_timestamp", None)
-        except:
-            pass  # File doesn't exist yet or error reading - that's OK
-
-        s3_client.put_object(
-            Bucket=STATISTICS_BUCKET,
-            Key=hot_1h_key,
-            Body=json.dumps({
-                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "top_hashtags_1h": top_hashtags_1h_array,
-                "last_fired_hot_tag": last_fired_hot_tag,
-                "last_fired_hot_tag_timestamp": last_fired_hot_tag_timestamp
-            }, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[S3] Saved 1h_hot to {hot_1h_key}")
+        # === Save selected hot hashtag for dashboard display ===
+        # Save to components/selected_hot_hashtag.json for TrendHashtags component
+        if selected_hot_tag or selection_method:
+            selected_hot_hashtag_key = "components/selected_hot_hashtag.json"
+            s3_client.put_object(
+                Bucket=STATISTICS_BUCKET,
+                Key=selected_hot_hashtag_key,
+                Body=json.dumps({
+                    "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "selected_hot_tag": selected_hot_tag,
+                    "selection_method": selection_method
+                }, ensure_ascii=False, indent=2),
+                ContentType="application/json; charset=utf-8"
+            )
+            print(f"[S3] Saved selected_hot_hashtag to {selected_hot_hashtag_key}")
 
         return s3_key_raw  # Return raw-dense key as primary
     except Exception as e:
@@ -1046,11 +1048,11 @@ def lambda_handler(event, context):
     batch_stats_raw = event.get("batch_stats_raw", {})
     batch_stats_stablehashtag = event.get("batch_stats_stablehashtag", {})
     dense_texts = event.get("dense_texts", [])
-    dense_texts_stablehashtag = event.get("dense_texts_stablehashtag", [])
     dense_base_forms = event.get("dense_base_forms", [])
-    dense_base_forms_stablehashtag = event.get("dense_base_forms_stablehashtag", [])
     hashtags = event.get("hashtags", {})
     top_n = event.get("top_n")
+    selected_hot_tag = event.get("selected_hot_tag")
+    selection_method = event.get("selection_method")
 
     # Extract getfeed_stats from batch stats
     getfeed_stats_raw_dense = batch_stats_raw.get("getfeed_stats", {"total_invocations": 0})
@@ -1086,7 +1088,7 @@ def lambda_handler(event, context):
     # === OPTIONAL: Save batch hashtags ===
     try:
         if hashtags:
-            save_hashtag_batch(STATISTICS_BUCKET, hashtags)
+            save_hashtag_batch(STATISTICS_BUCKET, hashtags, selected_hot_tag, selection_method)
     except Exception as e:
         print(f"[OPTIONAL] Hashtag batch save failed (non-critical): {str(e)}")
         import traceback
@@ -1127,8 +1129,8 @@ def lambda_handler(event, context):
     # === Now update dashboard (after all daily files are ready) ===
     if batch_stats_raw and batch_stats_stablehashtag:
         try:
-            # save_stats_to_s3 now accepts both QUERY 1 and QUERY 2 stats
-            s3_key_raw = save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag)
+            # save_stats_to_s3 now accepts both QUERY 1 and QUERY 2 stats + selected hot hashtag info
+            s3_key_raw = save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_tag, selection_method)
             s3_saved = True
             print(f"[PIPELINE] Statistics saved to S3")
 
