@@ -428,7 +428,7 @@ def backfill_previous_day(bucket, getfeed_stats_raw_dense, getfeed_stats_stableh
 
 
 # === Helper: Calculate visible_ts for stablehashtag feed ===
-def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
+def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds):
     """
     Calculate and attach visible_ts to items for stablehashtag feed.
     Uses exponential distribution with early concentration.
@@ -436,7 +436,6 @@ def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
     Args:
         items: List of items (dicts with uri, ts, etc.)
         batch_spread_seconds: Window for distributing visible_ts (e.g., 600s)
-        top_n: Number of concurrent hot hashtags (e.g., 2)
 
     Returns:
         List of items with visible_ts attached
@@ -452,7 +451,7 @@ def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
     for idx, item in enumerate(items):
         if items_count > 1:
             reverse_idx = items_count - 1 - idx
-            offset = batch_spread_seconds * top_n * (1 - (1 - reverse_idx / (items_count - 1)) ** spread_exponent)
+            offset = batch_spread_seconds * (1 - (1 - reverse_idx / (items_count - 1)) ** spread_exponent)
         else:
             offset = 0
 
@@ -463,7 +462,7 @@ def calculate_visible_ts_for_stablehashtag(items, batch_spread_seconds, top_n):
 
 
 # === Responsibility 1: Store Feeds to Valkey ===
-def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
+def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
     """
     Store posts to Valkey feed:raw, feed:dense, and feed:stablehashtag ZSETs.
 
@@ -471,7 +470,6 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
         items_raw: Posts from lang:ja query
         items_stablehashtag: Posts from lang:ja #<tag> query
         batch_spread_seconds: Window for distributing visible_ts
-        top_n: Number of hashtags in rotation (only applied to stablehashtag feed)
 
     Returns: (raw_stored, dense_stored, stablehashtag_stored)
     Raises: Exception on critical failure
@@ -540,7 +538,7 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
 
     # === Store StableTag Feed ===
     # Calculate visible_ts using exponential distribution
-    items_stablehashtag = calculate_visible_ts_for_stablehashtag(items_stablehashtag, batch_spread_seconds, top_n)
+    items_stablehashtag = calculate_visible_ts_for_stablehashtag(items_stablehashtag, batch_spread_seconds)
 
     for idx, item in enumerate(items_stablehashtag):
         uri = item.get("uri")
@@ -591,70 +589,6 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n):
 
 
 # === Responsibility 2: Aggregate 1H Hashtags (per batch) ===
-def aggregate_1h_hashtags(bucket):
-    """
-    Aggregate hashtags from past 1 hour batch files.
-    Reads from hashtags/batch/ and sums counts from files within the last 1 hour.
-    Sorts by count (descending).
-    (Badword filtering is done in ingest Lambda, so only safe hashtags are stored here)
-
-    Returns: Dict of {tag: count} sorted by count, or {} on failure
-    """
-    try:
-        now = get_jst_now()
-        one_hour_ago = now - timedelta(hours=1)
-
-        # List batch files from past 1 hour
-        prefix = f"hashtags/batch/"
-        paginator = s3_client.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
-
-        aggregated = {}
-        batch_count = 0
-
-        for page in pages:
-            if "Contents" not in page:
-                continue
-
-            for obj in page["Contents"]:
-                key = obj["Key"]
-                # Extract timestamp from key: hashtags/batch/YYYY-MM-DD_HH:MM.json
-                try:
-                    timestamp_str = key.split("/")[-1].replace(".json", "")
-                    # Parse timestamp to datetime for accurate comparison
-                    file_time = datetime.strptime(timestamp_str, "%Y-%m-%d_%H:%M")
-                    # Check if within 1 hour range
-                    if one_hour_ago <= file_time <= now:
-                        response = s3_client.get_object(Bucket=bucket, Key=key)
-                        batch_data = json.loads(response["Body"].read().decode("utf-8"))
-
-                        # Extract hashtags from batch file structure: {"hashtags": {...}, "selected_hot_tag": ..., "selection_method": ...}
-                        hashtags = batch_data.get("hashtags", {})
-                        for tag, count in hashtags.items():
-                            aggregated[tag] = aggregated.get(tag, 0) + count
-
-                        batch_count += 1
-                except Exception as e:
-                    print(f"[1H HASHTAGS] Error processing {key}: {str(e)}")
-                    continue
-
-        # Sort by count (descending)
-        sorted_hashtags = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)
-        sorted_dict = dict(sorted_hashtags)
-
-        print(f"[1H HASHTAGS] Aggregated {len(aggregated)} unique hashtags from {batch_count} batches (last 1H)")
-        for tag, count in sorted_hashtags[:10]:
-            print(f"  - #{tag}: {count}")
-
-        return sorted_dict
-
-    except Exception as e:
-        print(f"[1H HASHTAGS] Error aggregating: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {}
-
-
 def extract_stable_hashtags(bucket, days=30, top_n=100):
     """
     Extract TOP stable hashtags from past N days of daily files.
@@ -930,7 +864,7 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_ta
         stable_hashtags = extract_stable_hashtags(STATISTICS_BUCKET, days=30, top_n=100)
 
         # === Build separate dashboard stats for QUERY 1 and QUERY 2 ===
-        # Remove top_hashtags (archive), keep top_hashtags_1h (1H trend), add stable_hashtags
+        # Remove top_hashtags (archive), add stable_hashtags
         dashboard_stats_raw = {k: v for k, v in batch_stats_raw.items() if k not in ["top_hashtags"]}
         dashboard_stats_raw["stable_hashtags"] = stable_hashtags
 
@@ -969,26 +903,6 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_ta
             ContentType="application/json; charset=utf-8"
         )
         print(f"[S3] Saved stable_hashtags_from_raw_posts to {stable_hashtags_key}")
-
-        # Save top_hashtags_1h to components/top_hashtags_1h_from_raw_posts.json (QUERY 1 only)
-        top_hashtags_1h_key = "components/top_hashtags_1h_from_raw_posts.json"
-        top_hashtags_1h_raw = dashboard_stats_raw.get("top_hashtags_1h", {})
-        # Convert dict to array format for dashboard
-        if isinstance(top_hashtags_1h_raw, dict):
-            top_hashtags_1h_array = [{"tag": tag, "count": count} for tag, count in top_hashtags_1h_raw.items()]
-        else:
-            top_hashtags_1h_array = top_hashtags_1h_raw if isinstance(top_hashtags_1h_raw, list) else []
-
-        s3_client.put_object(
-            Bucket=STATISTICS_BUCKET,
-            Key=top_hashtags_1h_key,
-            Body=json.dumps({
-                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                "top_hashtags_1h": top_hashtags_1h_array
-            }, ensure_ascii=False, indent=2),
-            ContentType="application/json; charset=utf-8"
-        )
-        print(f"[S3] Saved top_hashtags_1h_from_raw_posts to {top_hashtags_1h_key}")
 
         # === NEW: Save to hashtags/datasource/ for hot-driven architecture ===
         # Save stable ranking to hashtags/datasource/stable_ranking.json
@@ -1050,7 +964,6 @@ def lambda_handler(event, context):
     dense_texts = event.get("dense_texts", [])
     dense_base_forms = event.get("dense_base_forms", [])
     hashtags = event.get("hashtags", {})
-    top_n = event.get("top_n")
     selected_hot_tag = event.get("selected_hot_tag")
     selection_method = event.get("selection_method")
 
@@ -1061,15 +974,10 @@ def lambda_handler(event, context):
     if not items_raw and not items_stablehashtag:
         return {"stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0, "note": "no items"}
 
-    if top_n is None:
-        print(f"[ERROR] top_n is missing from event payload, cannot proceed")
-        return {"error": "top_n is required", "stored_raw": 0, "stored_dense": 0, "stored_stablehashtag": 0}
-
     # === CRITICAL: Store feeds to Valkey ===
     try:
         batch_spread_seconds = get_batch_spread_seconds()
-        print(f"[HANDLER] Calling store_feeds with top_n={top_n}")
-        raw_stored, dense_stored, stablehashtag_stored = store_feeds(items_raw, items_stablehashtag, batch_spread_seconds, top_n)
+        raw_stored, dense_stored, stablehashtag_stored = store_feeds(items_raw, items_stablehashtag, batch_spread_seconds)
         print(f"[HANDLER] store_feeds returned: raw={raw_stored}, dense={dense_stored}, stablehashtag={stablehashtag_stored}")
     except Exception as e:
         print(f"[ERROR] store_feeds EXCEPTION: {str(e)}")
@@ -1112,17 +1020,6 @@ def lambda_handler(event, context):
         backfill_previous_day(STATISTICS_BUCKET, getfeed_stats_raw_dense, getfeed_stats_stablehashtag)
     except Exception as e:
         print(f"[OPTIONAL] Daily backfill failed (non-critical): {str(e)}")
-        import traceback
-        traceback.print_exc()
-
-    # === Aggregate 1H hashtags (per batch) ===
-    try:
-        top_hashtags_1h = aggregate_1h_hashtags(STATISTICS_BUCKET)
-        if top_hashtags_1h:
-            batch_stats_raw["top_hashtags_1h"] = top_hashtags_1h
-            batch_stats_stablehashtag["top_hashtags_1h"] = top_hashtags_1h
-    except Exception as e:
-        print(f"[OPTIONAL] 1H hashtags aggregation failed (non-critical): {str(e)}")
         import traceback
         traceback.print_exc()
 

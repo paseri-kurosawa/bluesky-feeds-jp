@@ -644,7 +644,20 @@ def lambda_handler(event, context):
         try:
             if hashtag_counts:
                 # Load stable ranking for intersection check
-                stable_hashtags = extract_stable_hashtags(statistics_bucket, days=30, top_n=100)
+                config = load_config()
+                s3_key = config.get("s3_keys", {}).get("stable_hashtags_from_raw_posts", "components/stable_hashtags_from_raw_posts.json")
+
+                try:
+                    s3 = boto3.client("s3")
+                    response = s3.get_object(Bucket=statistics_bucket, Key=s3_key)
+                    stable_data = json.loads(response["Body"].read().decode("utf-8"))
+                    stable_hashtags = stable_data.get("top_hashtags", [])
+                except Exception as e:
+                    print(f"[HOT-DRIVEN] Failed to load stable hashtags from {s3_key}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    stable_hashtags = []
+
                 stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
                 batch_tags_set = set(hashtag_counts.keys())
 
@@ -934,8 +947,6 @@ def lambda_handler(event, context):
         # Invoke Store Lambda asynchronously
         if items_raw or items_stablehashtag:
             lambda_client = boto3.client("lambda")
-            config = get_config()
-            top_n = config.get("hashtag_rotation", {}).get("top_n", 5)
             payload = {
                 "items_raw": items_raw,
                 "items_stablehashtag": items_stablehashtag,
@@ -944,7 +955,6 @@ def lambda_handler(event, context):
                 "dense_texts": dense_texts,
                 "dense_base_forms": dense_base_forms,
                 "hashtags": hashtag_counts,
-                "top_n": top_n,
                 "selected_hot_tag": selected_hot_tag,
                 "selection_method": selection_method
             }

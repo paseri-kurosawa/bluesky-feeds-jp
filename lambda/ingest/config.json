@@ -8,6 +8,11 @@
     "getfeed_log_group": "/aws/lambda/BlueskyFeedJpStack-GetFeedLambda76B14ED4-MohOv6auxFqB",
     "getfeed_log_group_note": "CloudWatch Logs クエリで使用。cdk deploy による自動生成値。"
   },
+  "s3_keys": {
+    "description": "S3 オブジェクトキーパス",
+    "stable_hashtags_from_raw_posts": "components/stable_hashtags_from_raw_posts.json",
+    "stable_hashtags_note": "過去30日の集計済み安定ハッシュタグ。data_control Lambda が保存。Ingest が hot-driven selection で使用。"
+  },
   "search": {
     "description": "Bluesky 検索パラメータ",
     "query": "lang:ja",
@@ -104,10 +109,5 @@
         }
       }
     }
-  },
-  "hashtag_rotation": {
-    "description": "Stable Hashtag フィード用のローテーション設定",
-    "top_n": 5,
-    "top_n_note": "stable_hashtags.json の top_hashtags 配列から、上位 N 個を使用してローテーション"
   }
 }
