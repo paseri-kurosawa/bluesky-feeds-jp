@@ -400,12 +400,12 @@ def select_hot_hashtag(hot_and_stable, latest_batch, stable_hashtags_list):
         for idx, tag_dict in enumerate(stable_hashtags_list)
     }
 
-    # Sort by: (1) appearance count desc, (2) stable position asc
+    # Sort by: (1) appearance count desc, (2) stable position desc (lower rank = less common = more diverse)
     selected = sorted(
         hot_and_stable,
         key=lambda tag: (
             -latest_batch.get(tag, 0),  # Appearance count (descending)
-            stable_position_map.get(tag, float('inf'))  # Position in stable list (ascending)
+            -stable_position_map.get(tag, float('-inf'))  # Position in stable list (descending - prefer lower ranks)
         )
     )[0]
 

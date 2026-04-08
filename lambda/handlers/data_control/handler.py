@@ -654,6 +654,9 @@ def save_hashtag_batch(bucket, hashtags, selected_hot_tag=None, selection_method
         timestamp = now.strftime("%Y-%m-%d_%H:%M")
         s3_key = f"hashtags/batch/{timestamp}.json"
 
+        # Sort hashtags by count (descending) to ensure dashboard displays them in order
+        hashtags = dict(sorted(hashtags.items(), key=lambda x: x[1], reverse=True))
+
         # Build batch data with hashtags and selection info
         batch_data = {
             "hashtags": hashtags,
