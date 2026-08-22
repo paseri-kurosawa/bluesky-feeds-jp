@@ -133,6 +133,27 @@ STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 GETFEED_LAMBDA_NAME = os.environ.get("GETFEED_LAMBDA_NAME", "")
 
+# Cached blocklist (loaded at runtime from S3)
+_blocked_dids = None
+
+def load_blocked_dids():
+    """Load blocked account DIDs from S3 (1 DID per line)."""
+    global _blocked_dids
+    if _blocked_dids is None:
+        s3_bucket = os.environ.get("S3_BUCKET", "")
+        if not s3_bucket:
+            _blocked_dids = set()
+            return _blocked_dids
+        try:
+            response = s3_client.get_object(Bucket=s3_bucket, Key="blocklist/accounts.txt")
+            text = response["Body"].read().decode("utf-8")
+            _blocked_dids = {line.strip() for line in text.split("\n") if line.strip()}
+            print(f"[BLOCKLIST] Loaded {len(_blocked_dids)} blocked DIDs")
+        except Exception as e:
+            print(f"[BLOCKLIST] Failed to load: {e}")
+            _blocked_dids = set()
+    return _blocked_dids
+
 # Cached credentials (loaded at runtime from Secrets Manager)
 _bsky_credentials = None
 
@@ -387,8 +408,10 @@ def process_posts_with_filters(posts, feed_type="raw"):
     items = []
     dense_texts = []
     dense_base_forms = []
+    blocked_dids = load_blocked_dids()
     skipped_by_reason = {
         "invalid_fields": 0,
+        "blocked_account": 0,
         "moderation_labels": 0,
         "non_japanese": 0,
         "spam_hashtags": 0,
@@ -409,6 +432,13 @@ def process_posts_with_filters(posts, feed_type="raw"):
         if not uri or not indexed_at:
             skipped_by_reason["invalid_fields"] += 1
             continue
+
+        # Skip posts from blocked accounts
+        if blocked_dids:
+            post_did = uri.split("/")[2] if uri.startswith("at://") else ""
+            if post_did in blocked_dids:
+                skipped_by_reason["blocked_account"] += 1
+                continue
 
         # Skip posts with labels (moderation)
         if has_any_labels(post):
