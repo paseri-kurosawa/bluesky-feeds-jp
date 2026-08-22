@@ -681,6 +681,46 @@ def save_hashtag_batch(bucket, hashtags, selected_hot_tags=None, selection_metho
             ContentType="application/json; charset=utf-8"
         )
         print(f"[HASHTAG] Saved latest_batch to components/latest_batch.json")
+
+        # Save merged recent batches (current + previous N-1) for dashboard
+        config = get_config()
+        hot_batch_lookback = config.get("scheduling", {}).get("hot_batch_lookback", 3)
+        try:
+            response = s3_client.list_objects_v2(Bucket=bucket, Prefix="hashtags/batch/")
+            recent_batches = []
+            if "Contents" in response:
+                batch_files = sorted(response["Contents"], key=lambda x: x["LastModified"], reverse=True)
+                for bf in batch_files[:hot_batch_lookback - 1]:
+                    try:
+                        br = s3_client.get_object(Bucket=bucket, Key=bf["Key"])
+                        bd = json.loads(br["Body"].read().decode("utf-8"))
+                        recent_batches.append(bd.get("hashtags", bd))
+                    except Exception:
+                        pass
+
+            merged = dict(hashtags)
+            for prev in recent_batches:
+                for tag, count in prev.items():
+                    tag_lower = tag.lower()
+                    merged[tag_lower] = merged.get(tag_lower, 0) + count
+
+            merged_sorted = dict(sorted(merged.items(), key=lambda x: x[1], reverse=True))
+            merged_body = json.dumps({
+                "hashtags": merged_sorted,
+                "batch_count": 1 + len(recent_batches),
+                "selected_hot_tags": selected_hot_tags or [],
+                "selection_method": selection_method
+            }, ensure_ascii=False, indent=2)
+
+            s3_client.put_object(
+                Bucket=bucket,
+                Key="components/recent_batches_merged.json",
+                Body=merged_body,
+                ContentType="application/json; charset=utf-8"
+            )
+            print(f"[HASHTAG] Saved recent_batches_merged ({1 + len(recent_batches)} batches) to components/recent_batches_merged.json")
+        except Exception as e:
+            print(f"[HASHTAG] Error saving merged batches: {str(e)}")
     except Exception as e:
         print(f"[HASHTAG ERROR] Failed to save hashtag batch: {str(e)}")
 

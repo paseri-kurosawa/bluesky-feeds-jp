@@ -6,6 +6,7 @@ export function TrendHashtags({ data }) {
     timestamp: null,
     stable_hashtags: [],
     latest_batch: [],
+    batch_count: 0,
     selected_hot_tags: [],
     selection_method: null
   })
@@ -26,15 +27,15 @@ export function TrendHashtags({ data }) {
           timestamp = json.generated_at
         }
 
-        // Fetch latest batch
-        const latestBatchUrl = `${bucketUrl}/components/latest_batch.json`
-        const latestBatchResponse = await fetch(latestBatchUrl)
+        // Fetch recent batches merged (past 3 batches = 30 min window)
+        const mergedBatchUrl = `${bucketUrl}/components/recent_batches_merged.json`
+        const mergedBatchResponse = await fetch(mergedBatchUrl)
         let latestBatchData = []
-        if (latestBatchResponse.ok) {
-          const batchJson = await latestBatchResponse.json()
-          // Handle format: {hashtags: {...}, selected_hot_tags: [...], selection_method}
-          const hashtags = batchJson.hashtags || batchJson
-          // Convert {tag: count} to [{tag: ..., count: ...}]
+        let batchCount = 0
+        if (mergedBatchResponse.ok) {
+          const mergedJson = await mergedBatchResponse.json()
+          const hashtags = mergedJson.hashtags || mergedJson
+          batchCount = mergedJson.batch_count || 1
           latestBatchData = Object.entries(hashtags).map(([tag, count]) => ({
             tag,
             count
@@ -56,6 +57,7 @@ export function TrendHashtags({ data }) {
           timestamp: timestamp || new Date().toISOString(),
           stable_hashtags: stableData,
           latest_batch: latestBatchData,
+          batch_count: batchCount,
           selected_hot_tags: selectedHotTags,
           selection_method: selectionMethod
         })
@@ -141,7 +143,7 @@ export function TrendHashtags({ data }) {
 
       <div className="trend-container">
         <div className="trend-section-batch">
-          <h3>Latest Batch</h3>
+          <h3>Recent Batches ({trends.batch_count || 1})</h3>
           {trends.latest_batch && trends.latest_batch.length > 0 ? (
             renderTable(trends.latest_batch)
           ) : (

@@ -21,7 +21,9 @@
     "limit_note": "1回の検索で取得する最大ポスト数。Bluesky API制限は100まで。10分ごと実行で時間あたり600ポスト。",
     "sort": "latest",
     "or_search_max_tags": 10,
-    "or_search_max_tags_note": "QUERY 2のOR検索に使用するハッシュタグの最大数。intersection（バッチ∩安定）から上位N件を使用。"
+    "or_search_max_tags_note": "QUERY 2のOR検索に使用するハッシュタグの最大数。intersection（バッチ∩安定）から上位N件を使用。",
+    "hot_batch_lookback": 3,
+    "hot_batch_lookback_note": "HOTハッシュタグ算出に使用する過去バッチ数。10分周期×3=30分窓。"
   },
   "language_detection": {
     "description": "言語検出（fastText）パラメータ",

@@ -12,6 +12,8 @@
     "description": "スケジューリング設定（EventBridge実行周期に対応）",
     "batch_spread_seconds": 600,
     "batch_spread_note": "ポストの可視化時間分布。10分ごとの実行に対応。単位: 秒。",
+    "hot_batch_lookback": 3,
+    "hot_batch_lookback_note": "HOTハッシュタグ算出およびダッシュボード表示に使用する過去バッチ数。10分周期×3=30分窓。",
     "stablehashtag_spread_exponent": 0.5,
     "stablehashtag_spread_note": "StableHashtag フィードの分布曲線指数。公式: offset = batch_spread_seconds * top_n * (1 - (1 - idx/(count-1))^exponent)",
     "stablehashtag_spread_examples": {
