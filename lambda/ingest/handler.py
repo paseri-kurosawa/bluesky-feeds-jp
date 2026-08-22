@@ -579,36 +579,35 @@ def lambda_handler(event, context):
         selected_hot_tags = []
         selection_method = None
         try:
-            if hashtag_counts:
-                config = load_config()
-                s3_key = config.get("s3_keys", {}).get("stable_hashtags_from_raw_posts", "components/stable_hashtags_from_raw_posts.json")
-                or_search_max_tags = config.get("search", {}).get("or_search_max_tags", 10)
-                hot_batch_lookback = config.get("search", {}).get("hot_batch_lookback", 3)
+            config = load_config()
+            s3_key = config.get("s3_keys", {}).get("stable_hashtags_from_raw_posts", "components/stable_hashtags_from_raw_posts.json")
+            or_search_max_tags = config.get("search", {}).get("or_search_max_tags", 10)
+            hot_batch_lookback = config.get("search", {}).get("hot_batch_lookback", 3)
 
-                # Load recent batches from S3 and merge hashtag counts
-                merged_hashtag_counts = dict(hashtag_counts)
-                try:
-                    s3 = boto3.client("s3")
-                    response = s3.list_objects_v2(Bucket=statistics_bucket, Prefix="hashtags/batch/")
-                    if "Contents" in response:
-                        batch_files = sorted(response["Contents"], key=lambda x: x["LastModified"], reverse=True)
-                        # Take up to (lookback - 1) previous batches (current batch is already in merged_hashtag_counts)
-                        for batch_file in batch_files[:hot_batch_lookback - 1]:
-                            try:
-                                batch_resp = s3.get_object(Bucket=statistics_bucket, Key=batch_file["Key"])
-                                batch_data = json.loads(batch_resp["Body"].read().decode("utf-8"))
-                                prev_hashtags = batch_data.get("hashtags", batch_data)
-                                for tag, count in prev_hashtags.items():
-                                    normalized_tag = tag.lower()
-                                    merged_hashtag_counts[normalized_tag] = merged_hashtag_counts.get(normalized_tag, 0) + count
-                            except Exception as e:
-                                print(f"[HOT-DRIVEN] Error reading batch file {batch_file['Key']}: {e}")
-                        print(f"[HOT-DRIVEN] Merged {len(merged_hashtag_counts)} unique hashtags from current + {min(len(batch_files), hot_batch_lookback - 1)} previous batches")
-                except Exception as e:
-                    print(f"[HOT-DRIVEN] Error loading previous batches: {e}")
-                    import traceback
-                    traceback.print_exc()
+            # Load recent batches from S3 and merge hashtag counts (includes empty batches)
+            merged_hashtag_counts = dict(hashtag_counts) if hashtag_counts else {}
+            try:
+                s3 = boto3.client("s3")
+                response = s3.list_objects_v2(Bucket=statistics_bucket, Prefix="hashtags/batch/")
+                if "Contents" in response:
+                    batch_files = sorted(response["Contents"], key=lambda x: x["LastModified"], reverse=True)
+                    for batch_file in batch_files[:hot_batch_lookback - 1]:
+                        try:
+                            batch_resp = s3.get_object(Bucket=statistics_bucket, Key=batch_file["Key"])
+                            batch_data = json.loads(batch_resp["Body"].read().decode("utf-8"))
+                            prev_hashtags = batch_data.get("hashtags", batch_data)
+                            for tag, count in prev_hashtags.items():
+                                normalized_tag = tag.lower()
+                                merged_hashtag_counts[normalized_tag] = merged_hashtag_counts.get(normalized_tag, 0) + count
+                        except Exception as e:
+                            print(f"[HOT-DRIVEN] Error reading batch file {batch_file['Key']}: {e}")
+                    print(f"[HOT-DRIVEN] Merged {len(merged_hashtag_counts)} unique hashtags from current + {min(len(batch_files), hot_batch_lookback - 1)} previous batches")
+            except Exception as e:
+                print(f"[HOT-DRIVEN] Error loading previous batches: {e}")
+                import traceback
+                traceback.print_exc()
 
+            if merged_hashtag_counts:
                 # Load stable ranking for intersection check
                 try:
                     response = s3.get_object(Bucket=statistics_bucket, Key=s3_key)
@@ -623,12 +622,10 @@ def lambda_handler(event, context):
                 stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
                 merged_tags_set = set(merged_hashtag_counts.keys())
 
-                # Get intersection using merged counts
                 intersection = stable_tags_set & merged_tags_set
 
                 if intersection:
                     print(f"[HOT-DRIVEN] Found {len(intersection)} merged+stable hashtags: {intersection}")
-                    # Sort by merged appearance count (descending), take top N
                     sorted_tags = sorted(intersection, key=lambda tag: -merged_hashtag_counts.get(tag, 0))
                     selected_hot_tags = sorted_tags[:or_search_max_tags]
                     selection_method = "batch_stable_or_search"
@@ -637,7 +634,7 @@ def lambda_handler(event, context):
                     print("[HOT-DRIVEN] No intersection between merged batches and stable hashtags")
                     selection_method = "dense_fallback"
             else:
-                print("[HOT-DRIVEN] No hashtags in this batch")
+                print("[HOT-DRIVEN] No hashtags in current or previous batches")
                 selection_method = "dense_fallback"
         except Exception as e:
             print(f"[HOT-DRIVEN] Error selecting hot hashtags: {e}")

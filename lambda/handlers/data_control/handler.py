@@ -1026,10 +1026,9 @@ def lambda_handler(event, context):
     # === OPTIONAL: Aggregate statistics and save to S3 ===
     s3_saved = False
 
-    # === OPTIONAL: Save batch hashtags ===
+    # === OPTIONAL: Save batch hashtags (always save for consistent intervals) ===
     try:
-        if hashtags:
-            save_hashtag_batch(STATISTICS_BUCKET, hashtags, selected_hot_tags, selection_method)
+        save_hashtag_batch(STATISTICS_BUCKET, hashtags, selected_hot_tags, selection_method)
     except Exception as e:
         print(f"[OPTIONAL] Hashtag batch save failed (non-critical): {str(e)}")
         import traceback
