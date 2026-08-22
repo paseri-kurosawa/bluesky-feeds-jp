@@ -689,7 +689,9 @@ def save_hashtag_batch(bucket, hashtags, selected_hot_tags=None, selection_metho
             response = s3_client.list_objects_v2(Bucket=bucket, Prefix="hashtags/batch/")
             recent_batches_list = [{"timestamp": timestamp, "hashtags": hashtags}]
             if "Contents" in response:
+                current_key = s3_key
                 batch_files = sorted(response["Contents"], key=lambda x: x["LastModified"], reverse=True)
+                batch_files = [bf for bf in batch_files if bf["Key"] != current_key]
                 for bf in batch_files[:hot_batch_lookback - 1]:
                     try:
                         br = s3_client.get_object(Bucket=bucket, Key=bf["Key"])
