@@ -255,6 +255,7 @@ def extract_hashtags(record):
 def search_posts_with_retry(client, search_query, search_config, max_retries=3):
     """
     Search posts with exponential backoff retry logic.
+    Uses strict=False to tolerate unknown embed types (e.g. gallery#view).
 
     Args:
         client: atproto Client instance
@@ -266,6 +267,8 @@ def search_posts_with_retry(client, search_query, search_config, max_retries=3):
         Search result or None if all retries failed
     """
     from atproto_client.exceptions import InvokeTimeoutError
+    from atproto_client.models.utils import get_or_create
+    import atproto_client.models as models
     import httpx
 
     search_limit = search_config["limit"]
@@ -274,11 +277,19 @@ def search_posts_with_retry(client, search_query, search_config, max_retries=3):
     for attempt in range(max_retries):
         try:
             print(f"Searching for posts: {search_query} (attempt {attempt + 1}/{max_retries})")
-            res = client.app.bsky.feed.search_posts({
-                "q": search_query,
-                "sort": search_sort,
-                "limit": search_limit,
-            })
+            # Workaround: atproto library uses strict=True internally, which crashes
+            # on unknown embed types (e.g. app.bsky.embed.gallery#view).
+            # We call invoke_query directly and parse with strict=False.
+            params_model = get_or_create(
+                {"q": search_query, "sort": search_sort, "limit": search_limit},
+                models.AppBskyFeedSearchPosts.Params
+            )
+            response = client.invoke_query(
+                "app.bsky.feed.searchPosts",
+                params=params_model,
+                output_encoding="application/json",
+            )
+            res = get_or_create(response.content, models.AppBskyFeedSearchPosts.Response, strict=False)
             print(f"Search successful on attempt {attempt + 1}")
             return res
         except (InvokeTimeoutError, httpx.TimeoutException) as e:
