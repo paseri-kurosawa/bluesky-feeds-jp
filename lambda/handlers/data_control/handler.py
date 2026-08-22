@@ -477,9 +477,13 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
     r.ping()
 
     now = int(time.time())
+    config = get_config()
+    max_post_age_days = config.get("scheduling", {}).get("max_post_age_days", 7)
+    max_age_seconds = max_post_age_days * 86400
     raw_stored = 0
     dense_stored = 0
     stablehashtag_stored = 0
+    skipped_too_old = 0
 
     # === Store Raw Feed ===
     items_count = len(items_raw)
@@ -497,8 +501,12 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
         if ts < 0:
             continue
 
+        # Skip posts older than max_post_age_days
+        if now - ts > max_age_seconds:
+            skipped_too_old += 1
+            continue
+
         # Calculate visible_ts: distribute posts across batch_spread_seconds window
-        # Reverse order: older posts appear first (idx=0 = oldest), newer posts later (idx=max = newest)
         if items_count > 1:
             reverse_idx = items_count - 1 - idx
             offset = (reverse_idx / (items_count - 1)) * batch_spread_seconds
@@ -506,21 +514,11 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
             offset = 0
         visible_ts = now + offset
 
-        # Create member as JSON with metadata
-        member = json.dumps({
-            "uri": uri,
-            "ts": ts,
-            "visible_ts": visible_ts,
-            "density_score": density_score,
-            "hashtags": item.get("hashtags", [])
-        }, ensure_ascii=False)
-
-        # Store in raw feed
+        # Store in raw feed (URI as member, NX to prevent duplicates)
         try:
-            result_raw = r.zadd("feed:raw:jp:v1", {member: visible_ts})
-            raw_stored += 1
-            if result_raw == 0:
-                print(f"[WARN] Raw zadd returned 0 (duplicate?): {uri}")
+            result_raw = r.zadd("feed:raw:jp:v1", {uri: visible_ts}, nx=True)
+            if result_raw:
+                raw_stored += 1
         except Exception as e:
             print(f"[ERROR] Raw zadd failed for {uri}: {e}")
             raise
@@ -528,10 +526,9 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
         # Store in dense feed if score >= threshold
         if density_score >= get_density_threshold():
             try:
-                result_dense = r.zadd("feed:dense:jp:v1", {member: visible_ts})
-                dense_stored += 1
-                if result_dense == 0:
-                    print(f"[WARN] Dense zadd returned 0 (duplicate?): {uri}")
+                result_dense = r.zadd("feed:dense:jp:v1", {uri: visible_ts}, nx=True)
+                if result_dense:
+                    dense_stored += 1
             except Exception as e:
                 print(f"[ERROR] Dense zadd failed for {uri}: {e}")
                 raise
@@ -555,24 +552,22 @@ def store_feeds(items_raw, items_stablehashtag, batch_spread_seconds):
         if ts < 0:
             continue
 
-        # Create member as JSON with metadata
-        member = json.dumps({
-            "uri": uri,
-            "ts": ts,
-            "visible_ts": visible_ts,
-            "density_score": density_score,
-            "hashtags": item.get("hashtags", [])
-        }, ensure_ascii=False)
+        # Skip posts older than max_post_age_days
+        if now - ts > max_age_seconds:
+            skipped_too_old += 1
+            continue
 
-        # Store in stablehashtag feed
+        # Store in stablehashtag feed (URI as member, NX to prevent duplicates)
         try:
-            result_stablehashtag = r.zadd("feed:stablehashtag:jp:v1", {member: visible_ts})
-            stablehashtag_stored += 1
-            if result_stablehashtag == 0:
-                print(f"[WARN] StableTag zadd returned 0 (duplicate?): {uri}")
+            result_stablehashtag = r.zadd("feed:stablehashtag:jp:v1", {uri: visible_ts}, nx=True)
+            if result_stablehashtag:
+                stablehashtag_stored += 1
         except Exception as e:
             print(f"[ERROR] StableTag zadd failed for {uri}: {e}")
             raise
+
+    if skipped_too_old > 0:
+        print(f"[STORE] Skipped {skipped_too_old} posts older than {max_post_age_days} days")
 
     # Trim all feeds to their limits (keep latest)
     r.zremrangebyrank("feed:raw:jp:v1", 0, -MAX_ITEMS_RAW - 1)
