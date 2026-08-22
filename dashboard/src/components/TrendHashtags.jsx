@@ -5,8 +5,7 @@ export function TrendHashtags({ data }) {
   const [trends, setTrends] = useState({
     timestamp: null,
     stable_hashtags: [],
-    latest_batch: [],
-    batch_count: 0,
+    recent_batches: [],
     selected_hot_tags: [],
     selection_method: null
   })
@@ -27,18 +26,15 @@ export function TrendHashtags({ data }) {
           timestamp = json.generated_at
         }
 
-        // Fetch recent batches merged (past 3 batches = 30 min window)
-        const mergedBatchUrl = `${bucketUrl}/components/recent_batches_merged.json`
-        const mergedBatchResponse = await fetch(mergedBatchUrl)
-        let latestBatchData = []
-        let batchCount = 0
-        if (mergedBatchResponse.ok) {
-          const mergedJson = await mergedBatchResponse.json()
-          const hashtags = mergedJson.hashtags || mergedJson
-          batchCount = mergedJson.batch_count || 1
-          latestBatchData = Object.entries(hashtags).map(([tag, count]) => ({
-            tag,
-            count
+        // Fetch recent batches (individual, past 3 batches)
+        const recentBatchUrl = `${bucketUrl}/components/recent_batches.json`
+        const recentBatchResponse = await fetch(recentBatchUrl)
+        let recentBatches = []
+        if (recentBatchResponse.ok) {
+          const recentJson = await recentBatchResponse.json()
+          recentBatches = (recentJson.batches || []).map(batch => ({
+            timestamp: batch.timestamp,
+            hashtags: Object.entries(batch.hashtags || {}).map(([tag, count]) => ({ tag, count }))
           }))
         }
 
@@ -56,8 +52,7 @@ export function TrendHashtags({ data }) {
         setTrends({
           timestamp: timestamp || new Date().toISOString(),
           stable_hashtags: stableData,
-          latest_batch: latestBatchData,
-          batch_count: batchCount,
+          recent_batches: recentBatches,
           selected_hot_tags: selectedHotTags,
           selection_method: selectionMethod
         })
@@ -143,9 +138,18 @@ export function TrendHashtags({ data }) {
 
       <div className="trend-container">
         <div className="trend-section-batch">
-          <h3>Recent Batches ({trends.batch_count || 1})</h3>
-          {trends.latest_batch && trends.latest_batch.length > 0 ? (
-            renderTable(trends.latest_batch)
+          <h3>Recent Batches</h3>
+          {trends.recent_batches && trends.recent_batches.length > 0 ? (
+            trends.recent_batches.map((batch, idx) => (
+              <div key={idx} className="batch-individual">
+                <h4>Batch {idx + 1} ({batch.timestamp})</h4>
+                {batch.hashtags.length > 0 ? (
+                  renderTable(batch.hashtags)
+                ) : (
+                  <p className="no-data">No hashtags</p>
+                )}
+              </div>
+            ))
           ) : (
             <p className="no-data">No batch data available</p>
           )}
