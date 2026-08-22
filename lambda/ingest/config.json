@@ -19,7 +19,9 @@
     "query_note": "検索クエリ。言語フィルタリング用。",
     "limit": 100,
     "limit_note": "1回の検索で取得する最大ポスト数。Bluesky API制限は100まで。10分ごと実行で時間あたり600ポスト。",
-    "sort": "latest"
+    "sort": "latest",
+    "or_search_max_tags": 10,
+    "or_search_max_tags_note": "QUERY 2のOR検索に使用するハッシュタグの最大数。intersection（バッチ∩安定）から上位N件を使用。"
   },
   "language_detection": {
     "description": "言語検出（fastText）パラメータ",

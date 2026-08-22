@@ -337,80 +337,6 @@ def load_latest_batch(bucket):
 
 
 
-def get_and_select_hot_hashtag(bucket):
-    """
-    Get intersection of latest batch and stable hashtags, then select one.
-
-    Args:
-        bucket: S3 bucket name
-
-    Returns:
-        Selected hashtag name (lowercase), or None if no hot detected
-    """
-    # Load both datasources
-    stable_hashtags = load_stable_ranking(bucket)
-    latest_batch = load_latest_batch(bucket)
-
-    if not stable_hashtags or not latest_batch:
-        print("[HOT-DRIVEN] No stable or batch hashtags available")
-        return None
-
-    # Convert stable list to set of lowercase tag names
-    stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
-    batch_tags_set = set(latest_batch.keys())
-
-    # Get intersection
-    intersection = stable_tags_set & batch_tags_set
-
-    if not intersection:
-        print("[HOT-DRIVEN] No intersection between batch and stable hashtags")
-        return None
-
-    print(f"[HOT-DRIVEN] Found {len(intersection)} batch+stable hashtags: {intersection}")
-
-    # Select 1 hashtag from intersection
-    selected_hot_tag = select_hot_hashtag(list(intersection), latest_batch, stable_hashtags)
-    return selected_hot_tag
-
-
-def select_hot_hashtag(hot_and_stable, latest_batch, stable_hashtags_list):
-    """
-    Select 1 hashtag from multiple hot+stable candidates.
-
-    Priority 1: Most appearances (hot degree)
-    Priority 2: Lowest position in stable list (rarity - for diversity)
-
-    Args:
-        hot_and_stable: List of tag names (lowercase)
-        latest_batch: Dict {tag: count}
-        stable_hashtags_list: List of dicts [{tag: ..., count: ...}]
-
-    Returns:
-        Selected hashtag name (lowercase)
-    """
-    if not hot_and_stable:
-        return None
-
-    if len(hot_and_stable) == 1:
-        return hot_and_stable[0]
-
-    # Build stable position map for tie-breaking
-    stable_position_map = {
-        tag_dict["tag"].lower(): idx
-        for idx, tag_dict in enumerate(stable_hashtags_list)
-    }
-
-    # Sort by: (1) appearance count desc, (2) stable position desc (lower rank = less common = more diverse)
-    selected = sorted(
-        hot_and_stable,
-        key=lambda tag: (
-            -latest_batch.get(tag, 0),  # Appearance count (descending)
-            -stable_position_map.get(tag, float('-inf'))  # Position in stable list (descending - prefer lower ranks)
-        )
-    )[0]
-
-    print(f"[HOT-DRIVEN] Selected: {selected} (count={latest_batch.get(selected, 0)}, stable_pos={stable_position_map.get(selected, 'N/A')})")
-    return selected
 
 
 def has_hashtags(item):
@@ -638,14 +564,15 @@ def lambda_handler(event, context):
             import traceback
             traceback.print_exc()
 
-        # === Select hot hashtag from THIS BATCH's hashtags ===
-        selected_hot_tag = None
+        # === Select hot hashtags from THIS BATCH's hashtags (OR search) ===
+        selected_hot_tags = []
         selection_method = None
         try:
             if hashtag_counts:
                 # Load stable ranking for intersection check
                 config = load_config()
                 s3_key = config.get("s3_keys", {}).get("stable_hashtags_from_raw_posts", "components/stable_hashtags_from_raw_posts.json")
+                or_search_max_tags = config.get("search", {}).get("or_search_max_tags", 10)
 
                 try:
                     s3 = boto3.client("s3")
@@ -666,9 +593,11 @@ def lambda_handler(event, context):
 
                 if intersection:
                     print(f"[HOT-DRIVEN] Found {len(intersection)} batch+stable hashtags: {intersection}")
-                    # Select 1 hashtag from intersection
-                    selected_hot_tag = select_hot_hashtag(list(intersection), hashtag_counts, stable_hashtags)
-                    selection_method = "batch_stable_intersection"
+                    # Sort by batch appearance count (descending), take top N
+                    sorted_tags = sorted(intersection, key=lambda tag: -hashtag_counts.get(tag, 0))
+                    selected_hot_tags = sorted_tags[:or_search_max_tags]
+                    selection_method = "batch_stable_or_search"
+                    print(f"[HOT-DRIVEN] Selected top {len(selected_hot_tags)} tags for OR search: {selected_hot_tags}")
                 else:
                     print("[HOT-DRIVEN] No intersection between batch and stable hashtags")
                     selection_method = "dense_fallback"
@@ -676,12 +605,12 @@ def lambda_handler(event, context):
                 print("[HOT-DRIVEN] No hashtags in this batch")
                 selection_method = "dense_fallback"
         except Exception as e:
-            print(f"[HOT-DRIVEN] Error selecting hot hashtag: {e}")
+            print(f"[HOT-DRIVEN] Error selecting hot hashtags: {e}")
             import traceback
             traceback.print_exc()
             selection_method = "dense_fallback"
 
-        # === QUERY 2: lang:ja #<hot_hashtag> (STABLETAG - HOT DRIVEN) ===
+        # === QUERY 2: lang:ja #tag1 OR #tag2 OR ... (STABLETAG - OR SEARCH) ===
         items_stablehashtag = []
         stablehashtag_posts_count = 0
         stats_payload_stablehashtag = None
@@ -691,13 +620,14 @@ def lambda_handler(event, context):
         skipped_by_reason_stablehashtag = None
 
         try:
-            if selected_hot_tag:
-                search_query_2 = f"lang:ja #{selected_hot_tag}"
-                print(f"[HOT-DRIVEN] Querying with selected hot hashtag: {search_query_2}")
+            if selected_hot_tags:
+                or_parts = " OR ".join(f"#{tag}" for tag in selected_hot_tags)
+                search_query_2 = f"lang:ja {or_parts}"
+                print(f"[HOT-DRIVEN] Querying with OR search ({len(selected_hot_tags)} tags): {search_query_2}")
 
                 res_2 = search_posts_with_retry(client, search_query_2, search_config, max_retries=3)
                 posts_2 = getattr(res_2, "posts", []) or []
-                print(f"[QUERY2] Found {len(posts_2)} posts for: {search_query_2}")
+                print(f"[QUERY2] Found {len(posts_2)} posts for OR search ({len(selected_hot_tags)} tags)")
 
                 items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
                 stablehashtag_posts_count = len(posts_2)
@@ -955,7 +885,7 @@ def lambda_handler(event, context):
                 "dense_texts": dense_texts,
                 "dense_base_forms": dense_base_forms,
                 "hashtags": hashtag_counts,
-                "selected_hot_tag": selected_hot_tag,
+                "selected_hot_tags": selected_hot_tags,
                 "selection_method": selection_method
             }
 
