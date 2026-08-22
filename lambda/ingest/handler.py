@@ -719,7 +719,8 @@ def lambda_handler(event, context):
                 items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
                 stablehashtag_posts_count = len(posts_2)
             else:
-                # Layer 1 no hot detected - Layer 2 fallback from Dense feed
+                # Layer 2 fallback: 24H fill導入により到達可能性は極めて低い。
+                # 削除しても実害はないが、サービス開始直後や障害時のセーフティネットとして残す。
                 print("[HOT-DRIVEN] No hot+stable hashtags detected. Using Layer 2 (Dense fallback)")
 
                 # Extract hashtag-bearing posts from Dense feed (items_raw with density_score >= threshold)
