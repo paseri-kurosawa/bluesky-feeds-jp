@@ -1,12 +1,12 @@
 # Bluesky Feed JP
 
-カスタム日本語フィード生成システムです。Blueskyのポストを処理して、2種類のフィードを提供します。
+カスタム日本語フィード生成システムです。Blueskyのポストを処理して、3種類のフィードを提供します。
 
 ## 概要
 
 このプロジェクトは以下の機能を提供します：
 
-### 1. フィード生成（2種類）
+### 1. フィード生成（3種類）
 
 #### Raw フィード
 - スコア選定なしの純粋な日本語ポスト時系列
@@ -17,6 +17,12 @@
 - Raw フィードから密度ベースのスコアリングで高品質ポストをキュレーション
 - トークン分散度、単語ベクトルノルム、属性調整、バッドワード検出を組み合わせた多層フィルタリング
 - 文字のみ（画像・動画なし）かつ15文字以下のポストは除外
+
+#### StableHashtag フィード
+- HOTハッシュタグのOR検索で取得したポスト
+- Priority 1: 過去3バッチ(30分窓) ∩ 安定ランキング(30日集計)
+- Priority 2: 過去24H全バッチ ∩ 安定ランキングからcount順で補完
+- 上限10タグでOR検索クエリを構築
 
 ### 2. スコアリングシステム（Dense フィード用）
 
@@ -31,6 +37,11 @@
 - **バッドワード**: 見出し語ベースのマッチング（形態素解析Janome）、マッチ数に応じて指数関数的にスコア減少
   - バッドワード辞書は S3 (`badwords/dictionary.txt`) から読み込み
   - **定義**: 暴力的表現、差別・ヘイト、人格攻撃、嫌がらせ、ハラスメント、政治的スキャンダルなど、否定的な感情や害を想起させる語彙
+
+### 3. アカウントブロックリスト
+- S3 (`blocklist/accounts.txt`) に1行1DIDで管理
+- Ingest時にフィルタ（フィード格納もハッシュタグ集計も対象外）
+- 大量投稿アカウントによるフィード汚染を防止
 
 ## 統計ダッシュボード
 
@@ -70,10 +81,10 @@ http://bluesky-feed-dashboard-878311109818.s3-website-ap-northeast-1.amazonaws.c
 - **Lambda Functions**:
   - DID Handler: フィード識別情報提供
   - Describe Feed: フィードメタデータ提供（Raw/Dense フィード記述）
-  - Get Feed: Valkeyキャッシュ参照で Raw/Dense フィード提供
+  - Get Feed: Valkeyキャッシュ参照で Raw/Dense/StableHashtag フィード提供
   - Ingest: Bluesky API検索 → スコアリング → DataControlへ非同期呼び出し（EventBridge 10分ごと）
   - DataControl: スコアリング結果をValkeyに格納 + 統計JSON生成
-- **Valkey Serverless**: キャッシュ層（ポストメタデータ: URI、タイムスタンプ、スコア等をメモリ内に保持）
+- **Valkey Serverless**: フィード格納（ZSET、member=URI、score=visible_ts、ZADD NX、7日超ポストは格納しない）
 - **S3**:
   - `bluesky-feed-badword-analysis-*`: バッドワードデータ
   - `bluesky-feed-dashboard-*`: ダッシュボード & 統計データ
@@ -145,6 +156,8 @@ Bluesky クレデンシャル（`BSKY_HANDLE`、`BSKY_APP_PASSWORD`）は AWS Se
 │   └── ...
 ├── badwords/
 │   └── dictionary.txt               # バッドワード辞書（1行1単語）
+├── blocklist/
+│   └── accounts.txt                 # アカウントブロックリスト（1行1DID）
 └── ...
 ```
 
