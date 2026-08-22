@@ -575,7 +575,9 @@ def lambda_handler(event, context):
             import traceback
             traceback.print_exc()
 
-        # === Merge current batch with recent batches for HOT hashtag detection ===
+        # === HOT hashtag selection with daily fill ===
+        # Priority 1: Recent N batches ∩ stable (HOT)
+        # Priority 2: Past 24H all batches ∩ stable, by count desc (daily fill)
         selected_hot_tags = []
         selection_method = None
         try:
@@ -584,57 +586,80 @@ def lambda_handler(event, context):
             or_search_max_tags = config.get("search", {}).get("or_search_max_tags", 10)
             hot_batch_lookback = config.get("search", {}).get("hot_batch_lookback", 3)
 
-            # Load recent batches from S3 and merge hashtag counts (includes empty batches)
-            merged_hashtag_counts = dict(hashtag_counts) if hashtag_counts else {}
+            s3 = boto3.client("s3")
+
+            # Load stable ranking
             try:
-                s3 = boto3.client("s3")
-                response = s3.list_objects_v2(Bucket=statistics_bucket, Prefix="hashtags/batch/")
-                if "Contents" in response:
-                    batch_files = sorted(response["Contents"], key=lambda x: x["LastModified"], reverse=True)
-                    for batch_file in batch_files[:hot_batch_lookback - 1]:
-                        try:
-                            batch_resp = s3.get_object(Bucket=statistics_bucket, Key=batch_file["Key"])
-                            batch_data = json.loads(batch_resp["Body"].read().decode("utf-8"))
-                            prev_hashtags = batch_data.get("hashtags", batch_data)
-                            for tag, count in prev_hashtags.items():
-                                normalized_tag = tag.lower()
-                                merged_hashtag_counts[normalized_tag] = merged_hashtag_counts.get(normalized_tag, 0) + count
-                        except Exception as e:
-                            print(f"[HOT-DRIVEN] Error reading batch file {batch_file['Key']}: {e}")
-                    print(f"[HOT-DRIVEN] Merged {len(merged_hashtag_counts)} unique hashtags from current + {min(len(batch_files), hot_batch_lookback - 1)} previous batches")
+                response = s3.get_object(Bucket=statistics_bucket, Key=s3_key)
+                stable_data = json.loads(response["Body"].read().decode("utf-8"))
+                stable_hashtags = stable_data.get("top_hashtags", [])
             except Exception as e:
-                print(f"[HOT-DRIVEN] Error loading previous batches: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[HOT-DRIVEN] Failed to load stable hashtags: {e}")
+                stable_hashtags = []
 
-            if merged_hashtag_counts:
-                # Load stable ranking for intersection check
+            stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
+
+            # List all batch files (sorted newest first)
+            all_batch_files = []
+            try:
+                response = s3.list_objects_v2(Bucket=statistics_bucket, Prefix="hashtags/batch/")
+                all_batch_files = sorted(response.get("Contents", []), key=lambda x: x["LastModified"], reverse=True)
+            except Exception as e:
+                print(f"[HOT-DRIVEN] Error listing batch files: {e}")
+
+            # --- Priority 1: HOT from recent N batches ---
+            merged_hashtag_counts = dict(hashtag_counts) if hashtag_counts else {}
+            for batch_file in all_batch_files[:hot_batch_lookback - 1]:
                 try:
-                    response = s3.get_object(Bucket=statistics_bucket, Key=s3_key)
-                    stable_data = json.loads(response["Body"].read().decode("utf-8"))
-                    stable_hashtags = stable_data.get("top_hashtags", [])
+                    batch_resp = s3.get_object(Bucket=statistics_bucket, Key=batch_file["Key"])
+                    batch_data = json.loads(batch_resp["Body"].read().decode("utf-8"))
+                    prev_hashtags = batch_data.get("hashtags", batch_data)
+                    for tag, count in prev_hashtags.items():
+                        merged_hashtag_counts[tag.lower()] = merged_hashtag_counts.get(tag.lower(), 0) + count
                 except Exception as e:
-                    print(f"[HOT-DRIVEN] Failed to load stable hashtags from {s3_key}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    stable_hashtags = []
+                    print(f"[HOT-DRIVEN] Error reading batch {batch_file['Key']}: {e}")
 
-                stable_tags_set = {tag_dict["tag"].lower() for tag_dict in stable_hashtags}
-                merged_tags_set = set(merged_hashtag_counts.keys())
+            hot_tags = []
+            if merged_hashtag_counts:
+                intersection = stable_tags_set & set(merged_hashtag_counts.keys())
+                hot_tags = sorted(intersection, key=lambda t: -merged_hashtag_counts[t])
+                print(f"[HOT-DRIVEN] Priority 1 (HOT): {len(hot_tags)} tags")
 
-                intersection = stable_tags_set & merged_tags_set
+            # --- Priority 2: Fill from past 24H batches ∩ stable ---
+            if len(hot_tags) < or_search_max_tags and all_batch_files:
+                from datetime import datetime, timezone, timedelta
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+                daily_counts = {}
+                files_read = 0
+                for batch_file in all_batch_files:
+                    if batch_file["LastModified"].replace(tzinfo=timezone.utc) < cutoff:
+                        break
+                    try:
+                        batch_resp = s3.get_object(Bucket=statistics_bucket, Key=batch_file["Key"])
+                        batch_data = json.loads(batch_resp["Body"].read().decode("utf-8"))
+                        prev_hashtags = batch_data.get("hashtags", batch_data)
+                        for tag, count in prev_hashtags.items():
+                            daily_counts[tag.lower()] = daily_counts.get(tag.lower(), 0) + count
+                        files_read += 1
+                    except Exception as e:
+                        print(f"[HOT-DRIVEN] Error reading daily batch {batch_file['Key']}: {e}")
 
-                if intersection:
-                    print(f"[HOT-DRIVEN] Found {len(intersection)} merged+stable hashtags: {intersection}")
-                    sorted_tags = sorted(intersection, key=lambda tag: -merged_hashtag_counts.get(tag, 0))
-                    selected_hot_tags = sorted_tags[:or_search_max_tags]
-                    selection_method = "batch_stable_or_search"
-                    print(f"[HOT-DRIVEN] Selected top {len(selected_hot_tags)} tags for OR search: {selected_hot_tags}")
-                else:
-                    print("[HOT-DRIVEN] No intersection between merged batches and stable hashtags")
-                    selection_method = "dense_fallback"
+                daily_intersection = stable_tags_set & set(daily_counts.keys())
+                hot_tags_set = set(hot_tags)
+                daily_fill = sorted(
+                    [t for t in daily_intersection if t not in hot_tags_set],
+                    key=lambda t: -daily_counts[t]
+                )
+                remaining = or_search_max_tags - len(hot_tags)
+                hot_tags.extend(daily_fill[:remaining])
+                print(f"[HOT-DRIVEN] Priority 2 (24H fill): {files_read} files, added {min(len(daily_fill), remaining)} tags")
+
+            if hot_tags:
+                selected_hot_tags = hot_tags[:or_search_max_tags]
+                selection_method = "batch_stable_or_search"
+                print(f"[HOT-DRIVEN] Final: {len(selected_hot_tags)} tags for OR search: {selected_hot_tags}")
             else:
-                print("[HOT-DRIVEN] No hashtags in current or previous batches")
+                print("[HOT-DRIVEN] No hashtags available from any source")
                 selection_method = "dense_fallback"
         except Exception as e:
             print(f"[HOT-DRIVEN] Error selecting hot hashtags: {e}")
