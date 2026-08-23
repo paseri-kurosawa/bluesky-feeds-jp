@@ -110,7 +110,7 @@ export function TrendHashtags({ data }) {
       {/* Selected Hot Hashtags Display */}
       <div className="selected-hot-hashtag-section">
         <div className="selected-hot-hashtag-content">
-          <h3>Currently Selected Hot Hashtags (OR Search)</h3>
+          <h3>Currently Selected Hot Hashtags (Per-Tag Query)</h3>
           {trends.selected_hot_tags && trends.selected_hot_tags.length > 0 ? (
             <div className="selected-hot-info">
               <div className="hashtag-display">
