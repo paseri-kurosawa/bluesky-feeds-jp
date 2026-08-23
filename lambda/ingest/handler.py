@@ -273,7 +273,7 @@ def extract_hashtags(record):
     return hashtags
 
 
-def search_posts_with_retry(client, search_query, search_config, max_retries=3):
+def search_posts_with_retry(client, search_query, search_config, max_retries=3, extra_params=None):
     """
     Search posts with exponential backoff retry logic.
     Uses strict=False to tolerate unknown embed types (e.g. gallery#view).
@@ -283,6 +283,7 @@ def search_posts_with_retry(client, search_query, search_config, max_retries=3):
         search_query: Query string to search for
         search_config: Search configuration dict (contains limit and sort)
         max_retries: Maximum number of retry attempts
+        extra_params: Optional dict of additional API params (since, lang, etc.)
 
     Returns:
         Search result or None if all retries failed
@@ -295,14 +296,15 @@ def search_posts_with_retry(client, search_query, search_config, max_retries=3):
     search_limit = search_config["limit"]
     search_sort = search_config["sort"]
 
+    params_dict = {"q": search_query, "sort": search_sort, "limit": search_limit}
+    if extra_params:
+        params_dict.update(extra_params)
+
     for attempt in range(max_retries):
         try:
             print(f"Searching for posts: {search_query} (attempt {attempt + 1}/{max_retries})")
-            # Workaround: atproto library uses strict=True internally, which crashes
-            # on unknown embed types (e.g. app.bsky.embed.gallery#view).
-            # We call invoke_query directly and parse with strict=False.
             params_model = get_or_create(
-                {"q": search_query, "sort": search_sort, "limit": search_limit},
+                params_dict,
                 models.AppBskyFeedSearchPosts.Params
             )
             response = client.invoke_query(
@@ -657,7 +659,6 @@ def lambda_handler(event, context):
 
             # --- Priority 2: Fill from past 24H batches ∩ stable ---
             if len(hot_tags) < or_search_max_tags and all_batch_files:
-                from datetime import datetime, timezone, timedelta
                 cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
                 daily_counts = {}
                 files_read = 0
@@ -708,13 +709,29 @@ def lambda_handler(event, context):
 
         try:
             if selected_hot_tags:
-                or_parts = " OR ".join(f"#{tag}" for tag in selected_hot_tags)
-                search_query_2 = f"lang:ja {or_parts}"
-                print(f"[HOT-DRIVEN] Querying with OR search ({len(selected_hot_tags)} tags): {search_query_2}")
+                since_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                per_tag_limit = max(5, search_config["limit"] // len(selected_hot_tags))
+                per_tag_config = {"limit": per_tag_limit, "sort": search_config["sort"]}
+                extra_params = {"lang": "ja", "since": since_date}
 
-                res_2 = search_posts_with_retry(client, search_query_2, search_config, max_retries=3)
-                posts_2 = getattr(res_2, "posts", []) or []
-                print(f"[QUERY2] Found {len(posts_2)} posts for OR search ({len(selected_hot_tags)} tags)")
+                print(f"[HOT-DRIVEN] Querying {len(selected_hot_tags)} tags individually (limit={per_tag_limit}/tag, sort=latest, since={since_date})")
+
+                posts_2 = []
+                seen_uris = set()
+                for tag in selected_hot_tags:
+                    try:
+                        res_tag = search_posts_with_retry(client, f"#{tag}", per_tag_config, max_retries=2, extra_params=extra_params)
+                        tag_posts = getattr(res_tag, "posts", []) or []
+                        new_posts = [p for p in tag_posts if p.uri not in seen_uris]
+                        for p in new_posts:
+                            seen_uris.add(p.uri)
+                        posts_2.extend(new_posts)
+                        print(f"[QUERY2] #{tag}: {len(tag_posts)} found, {len(new_posts)} new (sort=latest)")
+                    except Exception as tag_err:
+                        print(f"[QUERY2] #{tag}: ERROR - {tag_err}")
+
+                posts_2.sort(key=lambda p: getattr(p, "indexed_at", ""), reverse=True)
+                print(f"[QUERY2] Total: {len(posts_2)} unique posts from {len(selected_hot_tags)} tags (sorted by indexed_at desc)")
 
                 items_stablehashtag, dense_texts_stablehashtag, dense_base_forms_stablehashtag, badword_stats_stablehashtag, skipped_by_reason_stablehashtag = process_posts_with_filters(posts_2, feed_type="stablehashtag")
                 stablehashtag_posts_count = len(posts_2)
