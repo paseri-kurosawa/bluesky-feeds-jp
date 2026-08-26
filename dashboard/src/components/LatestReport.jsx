@@ -34,6 +34,11 @@ export function LatestReport({ data, showTitle = false }) {
               <td className="percentage">{ps.rates.invalid_fields_rate}%</td>
             </tr>
             <tr>
+              <td>Bot Accounts</td>
+              <td className="number">{ps.bot_account || 0}</td>
+              <td className="percentage">{ps.rates.bot_account_rate || 0}%</td>
+            </tr>
+            <tr>
               <td>Moderation Labels</td>
               <td className="number">{ps.moderation_labels}</td>
               <td className="percentage">{ps.rates.moderation_labels_rate}%</td>

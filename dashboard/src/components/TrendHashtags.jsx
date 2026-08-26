@@ -43,10 +43,12 @@ export function TrendHashtags({ data }) {
         const selectedHotResponse = await fetch(selectedHotUrl)
         let selectedHotTags = []
         let selectionMethod = null
+        let storedCounts = null
         if (selectedHotResponse.ok) {
           const hotJson = await selectedHotResponse.json()
           selectedHotTags = hotJson.selected_hot_tags || (hotJson.selected_hot_tag ? [hotJson.selected_hot_tag] : [])
           selectionMethod = hotJson.selection_method
+          storedCounts = hotJson.stored_counts || null
         }
 
         setTrends({
@@ -54,7 +56,8 @@ export function TrendHashtags({ data }) {
           stable_hashtags: stableData,
           recent_batches: recentBatches,
           selected_hot_tags: selectedHotTags,
-          selection_method: selectionMethod
+          selection_method: selectionMethod,
+          stored_counts: storedCounts
         })
       } catch (err) {
         console.error('Error fetching trend data:', err)
@@ -122,6 +125,14 @@ export function TrendHashtags({ data }) {
                 <span className="method-label">Selection Method:</span>
                 <span className="method-value">{trends.selection_method}</span>
               </div>
+              {trends.stored_counts && (
+                <div className="stored-counts">
+                  <span className="method-label">Stored (New Posts):</span>
+                  <span className="stored-value">Raw: {trends.stored_counts.raw}</span>
+                  <span className="stored-value">Dense: {trends.stored_counts.dense}</span>
+                  <span className="stored-value">StableTag: {trends.stored_counts.stablehashtag}</span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="selected-hot-info">

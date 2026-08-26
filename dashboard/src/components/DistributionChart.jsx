@@ -36,6 +36,7 @@ export function DistributionChart({ data }) {
   const textOnlyShort = data.dense_feed.text_only_short
   const densePosts = data.dense_feed.dense_posts
   const totalFetched = data.processing_summary.total_fetched
+  const botAccounts = data.processing_summary.bot_account || 0
   const modLabels = data.processing_summary.moderation_labels
   const nonJapanese = data.processing_summary.non_japanese
   const passed = data.processing_summary.passed_filters
@@ -58,15 +59,16 @@ export function DistributionChart({ data }) {
 
   // Filter breakdown pie chart
   const filterChartData = {
-    labels: ['Passed Filters', 'Moderation Labels', 'Non-Japanese'],
+    labels: ['Passed Filters', 'Bot Accounts', 'Moderation Labels', 'Non-Japanese'],
     datasets: [{
-      data: [passed, modLabels, nonJapanese],
+      data: [passed, botAccounts, modLabels, nonJapanese],
       backgroundColor: [
         '#86efac',
+        '#f59e0b',
         '#ef4444',
         '#e5e7eb'
       ],
-      borderColor: ['#4ade80', '#dc2626', '#d1d5db'],
+      borderColor: ['#4ade80', '#d97706', '#dc2626', '#d1d5db'],
       borderWidth: 2
     }]
   }

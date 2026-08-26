@@ -852,7 +852,7 @@ def aggregate_all_hashtags(bucket):
 
 
 # === Responsibility 3: Save Statistics to S3 ===
-def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_tags=None, selection_method=None):
+def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_tags=None, selection_method=None, stored_counts=None):
     """
     Save batch statistics to S3 (separated by QUERY type) and update dashboard.
     Replaces top_hashtags with stable_hashtags (from 30-day analysis).
@@ -955,14 +955,17 @@ def save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_ta
         # Save to components/selected_hot_hashtag.json for TrendHashtags component
         if selected_hot_tags or selection_method:
             selected_hot_hashtag_key = "components/selected_hot_hashtag.json"
+            hot_hashtag_data = {
+                "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "selected_hot_tags": selected_hot_tags or [],
+                "selection_method": selection_method
+            }
+            if stored_counts:
+                hot_hashtag_data["stored_counts"] = stored_counts
             s3_client.put_object(
                 Bucket=STATISTICS_BUCKET,
                 Key=selected_hot_hashtag_key,
-                Body=json.dumps({
-                    "generated_at": get_jst_now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selected_hot_tags": selected_hot_tags or [],
-                    "selection_method": selection_method
-                }, ensure_ascii=False, indent=2),
+                Body=json.dumps(hot_hashtag_data, ensure_ascii=False, indent=2),
                 ContentType="application/json; charset=utf-8"
             )
             print(f"[S3] Saved selected_hot_hashtags to {selected_hot_hashtag_key}")
@@ -1059,7 +1062,8 @@ def lambda_handler(event, context):
     if batch_stats_raw and batch_stats_stablehashtag:
         try:
             # save_stats_to_s3 now accepts both QUERY 1 and QUERY 2 stats + selected hot hashtag info
-            s3_key_raw = save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_tags, selection_method)
+            stored_counts = {"raw": raw_stored, "dense": dense_stored, "stablehashtag": stablehashtag_stored}
+            s3_key_raw = save_stats_to_s3(batch_stats_raw, batch_stats_stablehashtag, selected_hot_tags, selection_method, stored_counts=stored_counts)
             s3_saved = True
             print(f"[PIPELINE] Statistics saved to S3")
 

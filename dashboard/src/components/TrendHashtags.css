@@ -92,6 +92,24 @@
   border: 1px solid #ddd;
 }
 
+.stored-counts {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  margin-top: 0.25rem;
+  width: 100%;
+}
+
+.stored-value {
+  color: #1a7f37;
+  background-color: #dafbe1;
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid #a7f3d0;
+  font-weight: 500;
+}
+
 .no-selection {
   display: flex;
   align-items: center;

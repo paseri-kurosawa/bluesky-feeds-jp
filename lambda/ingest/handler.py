@@ -133,26 +133,6 @@ STORE_FUNCTION_NAME = os.environ.get("STORE_FUNCTION_NAME", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 GETFEED_LAMBDA_NAME = os.environ.get("GETFEED_LAMBDA_NAME", "")
 
-# Cached blocklist (loaded at runtime from S3)
-_blocked_dids = None
-
-def load_blocked_dids():
-    """Load blocked account DIDs from S3 (1 DID per line)."""
-    global _blocked_dids
-    if _blocked_dids is None:
-        s3_bucket = os.environ.get("S3_BUCKET", "")
-        if not s3_bucket:
-            _blocked_dids = set()
-            return _blocked_dids
-        try:
-            response = s3_client.get_object(Bucket=s3_bucket, Key="blocklist/accounts.txt")
-            text = response["Body"].read().decode("utf-8")
-            _blocked_dids = {line.strip() for line in text.split("\n") if line.strip()}
-            print(f"[BLOCKLIST] Loaded {len(_blocked_dids)} blocked DIDs")
-        except Exception as e:
-            print(f"[BLOCKLIST] Failed to load: {e}")
-            _blocked_dids = set()
-    return _blocked_dids
 
 # Cached credentials (loaded at runtime from Secrets Manager)
 _bsky_credentials = None
@@ -224,6 +204,17 @@ def has_any_labels(post):
     """Exclude posts that have any labels (moderation applied)"""
     labels = getattr(post, "labels", None)
     return bool(labels)
+
+def is_bot_account(post):
+    """Check if post author is a self-declared bot"""
+    author = getattr(post, "author", None)
+    if not author:
+        return False
+    labels = getattr(author, "labels", None)
+    if not labels:
+        return False
+    bot_labels = {"bot", "automation"}
+    return any(getattr(label, "val", "") in bot_labels for label in labels)
 
 def extract_hashtag_count(record):
     """Extract hashtag count from record.facets"""
@@ -410,10 +401,9 @@ def process_posts_with_filters(posts, feed_type="raw"):
     items = []
     dense_texts = []
     dense_base_forms = []
-    blocked_dids = load_blocked_dids()
     skipped_by_reason = {
         "invalid_fields": 0,
-        "blocked_account": 0,
+        "bot_account": 0,
         "moderation_labels": 0,
         "non_japanese": 0,
         "spam_hashtags": 0,
@@ -435,17 +425,16 @@ def process_posts_with_filters(posts, feed_type="raw"):
             skipped_by_reason["invalid_fields"] += 1
             continue
 
-        # Skip posts from blocked accounts
-        if blocked_dids:
-            post_did = uri.split("/")[2] if uri.startswith("at://") else ""
-            if post_did in blocked_dids:
-                skipped_by_reason["blocked_account"] += 1
-                continue
-
         # Skip posts with labels (moderation)
         if has_any_labels(post):
             print(f"[FILTER] Moderation: {uri}")
             skipped_by_reason["moderation_labels"] += 1
+            continue
+
+        # Skip bot accounts (self-declared bot)
+        if is_bot_account(post):
+            print(f"[FILTER] Bot account: {uri}")
+            skipped_by_reason["bot_account"] += 1
             continue
 
         # Extract text and post attributes
@@ -758,6 +747,7 @@ def lambda_handler(event, context):
                     }
                     skipped_by_reason_stablehashtag = {
                         "invalid_fields": 0,
+                        "bot_account": 0,
                         "moderation_labels": 0,
                         "non_japanese": 0,
                         "spam_hashtags": 0,
@@ -778,6 +768,7 @@ def lambda_handler(event, context):
                     }
                     skipped_by_reason_stablehashtag = {
                         "invalid_fields": 0,
+                        "bot_account": 0,
                         "moderation_labels": 0,
                         "non_japanese": 0,
                         "spam_hashtags": 0,
@@ -794,6 +785,7 @@ def lambda_handler(event, context):
             }
             skipped_by_reason_stablehashtag = {
                 "invalid_fields": 0,
+                "bot_account": 0,
                 "moderation_labels": 0,
                 "non_japanese": 0,
                 "spam_hashtags": 0,
@@ -802,6 +794,7 @@ def lambda_handler(event, context):
         print(f"\n=== Processing Summary ===")
         print(f"Raw posts: {len(posts_1)}")
         print(f"  - Invalid fields: {skipped_by_reason['invalid_fields']}")
+        print(f"  - Bot accounts: {skipped_by_reason['bot_account']}")
         print(f"  - Moderation labels: {skipped_by_reason['moderation_labels']}")
         print(f"  - Non-Japanese: {skipped_by_reason['non_japanese']}")
         print(f"  - Spam hashtags (5+): {skipped_by_reason['spam_hashtags']}")
@@ -894,12 +887,14 @@ def lambda_handler(event, context):
             "processing_summary": {
                 "total_fetched": total_fetched_raw,
                 "invalid_fields": skipped_by_reason['invalid_fields'],
+                "bot_account": skipped_by_reason['bot_account'],
                 "moderation_labels": skipped_by_reason['moderation_labels'],
                 "non_japanese": skipped_by_reason['non_japanese'],
                 "spam_hashtags": skipped_by_reason['spam_hashtags'],
                 "passed_filters": passed_filters_raw,
                 "rates": {
                     "invalid_fields_rate": round(skipped_by_reason['invalid_fields'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
+                    "bot_account_rate": round(skipped_by_reason['bot_account'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
                     "moderation_labels_rate": round(skipped_by_reason['moderation_labels'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
                     "non_japanese_rate": round(skipped_by_reason['non_japanese'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
                     "spam_hashtags_rate": round(skipped_by_reason['spam_hashtags'] / total_fetched_raw * 100, 1) if total_fetched_raw else 0,
@@ -949,12 +944,14 @@ def lambda_handler(event, context):
             "processing_summary": {
                 "total_fetched": total_fetched_stablehashtag,
                 "invalid_fields": skipped_by_reason_stablehashtag['invalid_fields'],
+                "bot_account": skipped_by_reason_stablehashtag['bot_account'],
                 "moderation_labels": skipped_by_reason_stablehashtag['moderation_labels'],
                 "non_japanese": skipped_by_reason_stablehashtag['non_japanese'],
                 "spam_hashtags": skipped_by_reason_stablehashtag['spam_hashtags'],
                 "passed_filters": passed_filters_stablehashtag,
                 "rates": {
                     "invalid_fields_rate": round(skipped_by_reason_stablehashtag['invalid_fields'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
+                    "bot_account_rate": round(skipped_by_reason_stablehashtag['bot_account'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
                     "moderation_labels_rate": round(skipped_by_reason_stablehashtag['moderation_labels'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
                     "non_japanese_rate": round(skipped_by_reason_stablehashtag['non_japanese'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
                     "spam_hashtags_rate": round(skipped_by_reason_stablehashtag['spam_hashtags'] / total_fetched_stablehashtag * 100, 1) if total_fetched_stablehashtag else 0,
